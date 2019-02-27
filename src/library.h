@@ -46,6 +46,7 @@ void *lammps_extract_variable(void *, char *, char *);
 
 double lammps_get_thermo(void *, char *);
 int lammps_get_natoms(void *);
+double lammps_get_pe(void *, int);
 
 int lammps_set_variable(void *, char *, char *);
 void lammps_reset_box(void *, double *, double *, double, double, double);

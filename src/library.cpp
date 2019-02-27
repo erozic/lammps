@@ -40,6 +40,14 @@
 #include "force.h"
 #include "info.h"
 
+#include "neighbor.h"
+#include "pair.h"
+#include "bond.h"
+#include "angle.h"
+#include "dihedral.h"
+#include "improper.h"
+#include "kspace.h"
+
 using namespace LAMMPS_NS;
 
 // ----------------------------------------------------------------------
@@ -730,6 +738,61 @@ int lammps_get_natoms(void *ptr)
   if (lmp->atom->natoms > MAXSMALLINT) return 0;
   int natoms = static_cast<int> (lmp->atom->natoms);
   return natoms;
+}
+
+/* ----------------------------------------------------------------------
+   (Re)Calculate and return the current potential energy of the system. This
+   forces the recalculation of all energies (and forces), regardless of the
+   last timestep and everything else, and returns the freshly calculated total
+   energy. In order to maximally reduce overhead only the global energy and no
+   virials are calculated and atom coordinates and the box are assumed
+   unchanged.
+   neigh_flag = if nonzero neighbor lists are rebuilt before calculation
+
+   This method is useful to make MC steps that possibly change the internal
+   states of atoms (e.g. their type) but don't move them and an MD run can (and
+   is expected to) continue afterwards.
+   Using "run 0 post no" (pre is needed) results in a lot of unnecessary
+   overhead (logging, various setups etc.).
+------------------------------------------------------------------------- */
+double lammps_get_pe(void *ptr, int neigh_flag)
+{
+  LAMMPS *lmp = (LAMMPS *) ptr;
+
+  //neighbors can change with change of e.g. type (interaction/range etc.)
+  if (neigh_flag)
+    lmp->neighbor->build(1);
+  //does anything else need to be taken into account? (proc communication...)
+
+  //lmp->update->integrate->eflag/vflag
+  int eflag = 1; // for global energy computation only
+  int vflag = 0; // no virial computation
+  lmp->update->eflag_global = lmp->update->ntimestep; //just in case
+
+  //force_clear() (from verlet.cpp) not necessary because forces irrelevant...
+
+  // force (and energy) (re)calculation...
+  if (lmp->force->pair && lmp->force->pair->compute_flag) {
+    lmp->force->pair->compute(eflag, vflag);
+  }
+  if (lmp->atom->molecular) {
+    if (lmp->force->bond) lmp->force->bond->compute(eflag, vflag);
+    if (lmp->force->angle) lmp->force->angle->compute(eflag, vflag);
+    if (lmp->force->dihedral) lmp->force->dihedral->compute(eflag, vflag);
+    if (lmp->force->improper) lmp->force->improper->compute(eflag, vflag);
+  }
+  if (lmp->force->kspace && lmp->force->kspace->compute_flag) {
+    lmp->force->kspace->compute(eflag, vflag);
+  }
+  if (lmp->force->newton) {
+    lmp->comm->reverse_comm();
+  }
+
+  int id = lmp->modify->find_compute("thermo_pe");
+  if (id < 0)
+    lmp->error->all(FLERR, "The thermo_pe compute is not defined!");
+  else
+    return lmp->modify->compute[id]->compute_scalar();
 }
 
 /* ----------------------------------------------------------------------
