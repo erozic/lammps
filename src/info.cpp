@@ -42,6 +42,7 @@
 #include "variable.h"
 #include "update.h"
 #include "error.h"
+#include "utils.h"
 
 #include <ctime>
 #include <map>
@@ -260,9 +261,14 @@ void Info::command(int narg, char **arg)
   fprintf(out,"Printed on %s\n",ctime(&now));
 
   if (flags & CONFIG) {
-    fprintf(out,"\nLAMMPS version: %s / %s\n\n",
-            universe->version, universe->num_ver);
-
+    if (lmp->has_git_info) {
+      fprintf(out,"\nLAMMPS version: %s / %s\nGit info: %s / %s / %s\n\n",
+              universe->version, universe->num_ver,lmp->git_branch,
+              lmp->git_descriptor,lmp->git_commit);
+    } else {
+      fprintf(out,"\nLAMMPS version: %s / %s\n\n",
+              universe->version, universe->num_ver);
+    }
     const char *infobuf = get_os_info();
     fprintf(out,"OS information: %s\n\n",infobuf);
     delete[] infobuf;
@@ -392,7 +398,7 @@ void Info::command(int narg, char **arg)
     fprintf(out,"Atoms = " BIGINT_FORMAT ",  types = %d,  style = %s\n",
             atom->natoms, atom->ntypes, force->pair_style);
 
-    if (force->pair && strstr(force->pair_style,"hybrid")) {
+    if (force->pair && utils::strmatch(force->pair_style,"^hybrid")) {
       PairHybrid *hybrid = (PairHybrid *)force->pair;
       fprintf(out,"Hybrid sub-styles:");
       for (int i=0; i < hybrid->nstyles; ++i)
