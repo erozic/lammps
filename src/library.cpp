@@ -14,14 +14,12 @@
 // C or Fortran style library interface to LAMMPS
 // customize by adding new LAMMPS-specific functions
 
+#include "library.h"
 #include <mpi.h>
+#include <cctype>
 #include <cstring>
 #include <cstdlib>
-#include "library.h"
-#include "lmptype.h"
-#include "lammps.h"
 #include "universe.h"
-#include "input.h"
 #include "atom_vec.h"
 #include "atom.h"
 #include "domain.h"
@@ -40,13 +38,9 @@
 #include "force.h"
 #include "info.h"
 
-#include "neighbor.h"
-#include "pair.h"
-#include "bond.h"
-#include "angle.h"
-#include "dihedral.h"
-#include "improper.h"
-#include "kspace.h"
+#if defined(LAMMPS_EXCEPTIONS)
+#include "exceptions.h"
+#endif
 
 using namespace LAMMPS_NS;
 
