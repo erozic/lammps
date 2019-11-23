@@ -38,6 +38,14 @@
 #include "force.h"
 #include "info.h"
 #include "fix_external.h"
+//additional includes for lammps_get_pe
+#include "neighbor.h"
+#include "pair.h"
+#include "bond.h"
+#include "angle.h"
+#include "dihedral.h"
+#include "improper.h"
+#include "kspace.h"
 
 #if defined(LAMMPS_EXCEPTIONS)
 #include "exceptions.h"
