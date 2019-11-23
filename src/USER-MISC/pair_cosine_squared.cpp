@@ -14,11 +14,10 @@
    Contributing authors: Eugen Rozic (University College London)
 ------------------------------------------------------------------------- */
 
+#include "pair_cosine_squared.h"
 #include <cmath>
-#include <cstdio>
 #include <cstdlib>
 #include <cstring>
-#include "pair_cosine_squared.h"
 #include "atom.h"
 #include "comm.h"
 #include "force.h"
@@ -31,6 +30,7 @@
 #include "math_const.h"
 #include "memory.h"
 #include "error.h"
+#include "utils.h"
 
 using namespace LAMMPS_NS;
 using namespace MathConst;
@@ -125,7 +125,7 @@ void PairCosineSquared::coeff(int narg, char **arg)
 {
   if (narg < 4 || narg > 6)
     error->all(FLERR, "Incorrect args for pair coefficients (too few or too many)");
-  
+
   if (!allocated)
     allocate();
 
@@ -153,8 +153,15 @@ void PairCosineSquared::coeff(int narg, char **arg)
     }
   }
 
-  if (cut_one <= sigma_one)
-    error->all(FLERR, "Incorrect args for pair coefficients (cutoff <= sigma)");
+  if (cut_one < sigma_one) {
+    error->all(FLERR, "Incorrect args for pair coefficients (cutoff < sigma)");
+  } else if (cut_one == sigma_one) {
+    if (wca_one == 0) {
+      error->all(FLERR, "Incorrect args for pair coefficients (cutoff = sigma w/o wca)");
+    } else {
+      error->warning(FLERR, "Cosine/squared set to WCA only (cutoff = sigma)");
+    }
+  }
 
   int count = 0;
   for (int i = ilo; i <= ihi; i++) {
@@ -224,10 +231,10 @@ void PairCosineSquared::modify_params(int narg, char **arg)
     if (strcmp(arg[iarg], "mix") == 0) {
       error->all(FLERR, "pair_modify mix not supported for pair_style cosine/squared");
     } else if (strcmp(arg[iarg], "shift") == 0) {
-      error->warning(FLERR, "pair_modify shift is meaningless for pair_style cosine/squared");
+      error->warning(FLERR, "pair_modify shift has no effect on pair_style cosine/squared");
       offset_flag = 0;
     } else if (strcmp(arg[iarg], "tail") == 0) {
-      error->warning(FLERR, "pair_modify tail is meaningless for pair_style cosine/squared");
+      error->warning(FLERR, "pair_modify tail has no effect on pair_style cosine/squared");
       tail_flag = 0;
     }
     iarg++;
@@ -269,14 +276,14 @@ void PairCosineSquared::read_restart(FILE *fp)
   for (i = 1; i <= atom->ntypes; i++) {
     for (j = i; j <= atom->ntypes; j++) {
       if (me == 0)
-        fread(&setflag[i][j], sizeof(int), 1, fp);
+        utils::sfread(FLERR,&setflag[i][j], sizeof(int), 1, fp,NULL,error);
       MPI_Bcast(&setflag[i][j], 1, MPI_INT, 0, world);
       if (setflag[i][j]) {
         if (me == 0) {
-          fread(&epsilon[i][j], sizeof(double), 1, fp);
-          fread(&sigma[i][j], sizeof(double), 1, fp);
-          fread(&cut[i][j], sizeof(double), 1, fp);
-          fread(&wcaflag[i][j], sizeof(int), 1, fp);
+          utils::sfread(FLERR,&epsilon[i][j], sizeof(double), 1, fp,NULL,error);
+          utils::sfread(FLERR,&sigma[i][j], sizeof(double), 1, fp,NULL,error);
+          utils::sfread(FLERR,&cut[i][j], sizeof(double), 1, fp,NULL,error);
+          utils::sfread(FLERR,&wcaflag[i][j], sizeof(int), 1, fp,NULL,error);
         }
         MPI_Bcast(&epsilon[i][j], 1, MPI_DOUBLE, 0, world);
         MPI_Bcast(&sigma[i][j], 1, MPI_DOUBLE, 0, world);
@@ -304,7 +311,7 @@ void PairCosineSquared::read_restart_settings(FILE *fp)
 {
   int me = comm->me;
   if (me == 0) {
-    fread(&cut_global, sizeof(double), 1, fp);
+    utils::sfread(FLERR,&cut_global, sizeof(double), 1, fp,NULL,error);
   }
   MPI_Bcast(&cut_global, 1, MPI_DOUBLE, 0, world);
 }
@@ -399,8 +406,12 @@ void PairCosineSquared::compute(int eflag, int vflag)
             force_lj = r6inv*(lj12_f[itype][jtype]*r6inv - lj6_f[itype][jtype]);
             fpair = factor_lj*force_lj*r2inv;
             if (eflag) {
-              evdwl = factor_lj*r6inv * 
+              evdwl = factor_lj*r6inv*
                       (lj12_e[itype][jtype]*r6inv - lj6_e[itype][jtype]);
+              if (sigma[itype][jtype] == cut[itype][jtype]) {
+                // this is the WCA-only case (it requires this shift by definition)
+                evdwl += factor_lj*epsilon[itype][jtype];
+              }
             }
           } else {
             fpair = 0.0;
@@ -443,12 +454,12 @@ void PairCosineSquared::compute(int eflag, int vflag)
    it is called only if rsq < cutsq[itype][jtype], no need to check that
 ------------------------------------------------------------------------- */
 
-double PairCosineSquared::single(int i, int j, int itype, int jtype, double rsq,
-                         double factor_coul, double factor_lj,
+double PairCosineSquared::single(int /* i */, int /* j */, int itype, int jtype, double rsq,
+                         double /* factor_coul */, double factor_lj,
                          double &fforce)
 {
   double r, r2inv, r6inv, cosone, force, energy;
-  
+
   r = sqrt(rsq);
 
   if (r <= sigma[itype][jtype]) {
@@ -457,13 +468,17 @@ double PairCosineSquared::single(int i, int j, int itype, int jtype, double rsq,
       r6inv = r2inv*r2inv*r2inv;
       force = r6inv*(lj12_f[itype][jtype]*r6inv - lj6_f[itype][jtype])*r2inv;
       energy = r6inv*(lj12_e[itype][jtype]*r6inv - lj6_e[itype][jtype]);
+      if (sigma[itype][jtype] == cut[itype][jtype]) {
+        // this is the WCA-only case (it requires this shift by definition)
+        energy += epsilon[itype][jtype];
+      }
     } else {
       force = 0.0;
       energy = -epsilon[itype][jtype];
     }
   } else {
     cosone = cos(MY_PI*(r-sigma[itype][jtype]) / (2.0*w[itype][jtype]));
-    force = -(MY_PI*epsilon[itype][jtype] / (2.0*w[itype][jtype])) * 
+    force = -(MY_PI*epsilon[itype][jtype] / (2.0*w[itype][jtype])) *
                  sin(MY_PI*(r-sigma[itype][jtype]) / w[itype][jtype]) / r;
     energy = -epsilon[itype][jtype]*cosone*cosone;
   }
