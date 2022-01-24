@@ -61,7 +61,6 @@
 
 #include <cstring>
 
-
 #if defined(LAMMPS_EXCEPTIONS)
 #include "exceptions.h"
 #endif

@@ -81,7 +81,6 @@ enum _LMP_TYPE_CONST {
 extern "C" {
 #endif
 
-
 /* ----------------------------------------------------------------------
  * Library functions to create/destroy an instance of LAMMPS
  * ---------------------------------------------------------------------- */
