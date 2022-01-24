@@ -1,11 +1,13 @@
 .. index:: compute temp/deform
+.. index:: compute temp/deform/kk
 
 compute temp/deform command
 ===========================
 
+Accelerator Variants: *temp/deform/kk*
+
 Syntax
 """"""
-
 
 .. parsed-literal::
 
@@ -17,8 +19,7 @@ Syntax
 Examples
 """"""""
 
-
-.. parsed-literal::
+.. code-block:: LAMMPS
 
    compute myTemp all temp/deform
 
@@ -33,7 +34,7 @@ induced by use of the :doc:`fix deform <fix_deform>` command.  A compute
 of this style is created by the :doc:`fix nvt/sllod <fix_nvt_sllod>`
 command to compute the thermal temperature of atoms for thermostatting
 purposes.  A compute of this style can also be used by any command
-that computes a temperature, e.g. :doc:`thermo\_modify <thermo_modify>`,
+that computes a temperature, e.g. :doc:`thermo_modify <thermo_modify>`,
 :doc:`fix temp/rescale <fix_temp_rescale>`, :doc:`fix npt <fix_nh>`, etc.
 
 The deformation fix changes the box size and/or shape over time, so
@@ -74,7 +75,7 @@ zz, xy, xz, yz.
 
 The number of atoms contributing to the temperature is assumed to be
 constant for the duration of the run; use the *dynamic* option of the
-:doc:`compute\_modify <compute_modify>` command if this is not the case.
+:doc:`compute_modify <compute_modify>` command if this is not the case.
 
 The removal of the box deformation velocity component by this fix is
 essentially computing the temperature after a "bias" has been removed
@@ -104,18 +105,19 @@ constrain molecular motion, such as :doc:`fix shake <fix_shake>` and
 :doc:`fix rigid <fix_rigid>`.  This means the temperature of groups of
 atoms that include these constraints will be computed correctly.  If
 needed, the subtracted degrees-of-freedom can be altered using the
-*extra* option of the :doc:`compute\_modify <compute_modify>` command.
+*extra* option of the :doc:`compute_modify <compute_modify>` command.
 
-See the :doc:`Howto thermostat <Howto_thermostat>` doc page for a
+See the :doc:`Howto thermostat <Howto_thermostat>` page for a
 discussion of different ways to compute temperature and perform
 thermostatting.
 
-**Output info:**
+Output info
+"""""""""""
 
 This compute calculates a global scalar (the temperature) and a global
 vector of length 6 (KE tensor), which can be accessed by indices 1-6.
 These values can be used by any command that uses global scalar or
-vector values from a compute as input.  See the :doc:`Howto output <Howto_output>` doc page for an overview of LAMMPS output
+vector values from a compute as input.  See the :doc:`Howto output <Howto_output>` page for an overview of LAMMPS output
 options.
 
 The scalar value calculated by this compute is "intensive".  The
@@ -134,9 +136,7 @@ Related commands
 :doc:`compute temp/ramp <compute_temp_ramp>`, :doc:`compute temp/profile <compute_temp_profile>`, :doc:`fix deform <fix_deform>`,
 :doc:`fix nvt/sllod <fix_nvt_sllod>`
 
-**Default:** none
+Default
+"""""""
 
-
-.. _lws: http://lammps.sandia.gov
-.. _ld: Manual.html
-.. _lc: Commands_all.html
+none

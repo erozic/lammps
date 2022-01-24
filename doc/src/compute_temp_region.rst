@@ -6,7 +6,6 @@ compute temp/region command
 Syntax
 """"""
 
-
 .. parsed-literal::
 
    compute ID group-ID temp/region region-ID
@@ -18,8 +17,7 @@ Syntax
 Examples
 """"""""
 
-
-.. parsed-literal::
+.. code-block:: LAMMPS
 
    compute mine flow temp/region boundary
 
@@ -31,7 +29,7 @@ atoms in a geometric region.  This can be useful for thermostatting
 one portion of the simulation box.  E.g. a McDLT simulation where one
 side is cooled, and the other side is heated.  A compute of this style
 can be used by any command that computes a temperature,
-e.g. :doc:`thermo\_modify <thermo_modify>`, :doc:`fix temp/rescale <fix_temp_rescale>`, etc.
+e.g. :doc:`thermo_modify <thermo_modify>`, :doc:`fix temp/rescale <fix_temp_rescale>`, etc.
 
 Note that a *region*\ -style temperature can be used to thermostat with
 :doc:`fix temp/rescale <fix_temp_rescale>` or :doc:`fix langevin <fix_langevin>`, but should probably not be used with
@@ -54,7 +52,7 @@ zz, xy, xz, yz.
 The number of atoms contributing to the temperature is calculated each
 time the temperature is evaluated since it is assumed atoms can
 enter/leave the region.  Thus there is no need to use the *dynamic*
-option of the :doc:`compute\_modify <compute_modify>` command for this
+option of the :doc:`compute_modify <compute_modify>` command for this
 compute style.
 
 The removal of atoms outside the region by this fix is essentially
@@ -77,18 +75,19 @@ motion, such as :doc:`fix shake <fix_shake>` and :doc:`fix rigid <fix_rigid>`.  
 the region boundary, and hence the concept is somewhat ill-defined.
 If needed the number of subtracted degrees-of-freedom can be set
 explicitly using the *extra* option of the
-:doc:`compute\_modify <compute_modify>` command.
+:doc:`compute_modify <compute_modify>` command.
 
-See the :doc:`Howto thermostat <Howto_thermostat>` doc page for a
+See the :doc:`Howto thermostat <Howto_thermostat>` page for a
 discussion of different ways to compute temperature and perform
 thermostatting.
 
-**Output info:**
+Output info
+"""""""""""
 
 This compute calculates a global scalar (the temperature) and a global
 vector of length 6 (KE tensor), which can be accessed by indices 1-6.
 These values can be used by any command that uses global scalar or
-vector values from a compute as input.  See the :doc:`Howto output <Howto_output>` doc page for an overview of LAMMPS output
+vector values from a compute as input.  See the :doc:`Howto output <Howto_output>` page for an overview of LAMMPS output
 options.
 
 The scalar value calculated by this compute is "intensive".  The
@@ -106,9 +105,7 @@ Related commands
 
 :doc:`compute temp <compute_temp>`, :doc:`compute pressure <compute_pressure>`
 
-**Default:** none
+Default
+"""""""
 
-
-.. _lws: http://lammps.sandia.gov
-.. _ld: Manual.html
-.. _lc: Commands_all.html
+none
