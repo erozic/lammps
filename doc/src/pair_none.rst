@@ -1,21 +1,19 @@
-.. index:: pair\_style none
+.. index:: pair_style none
 
-pair\_style none command
-========================
+pair_style none command
+=======================
 
 Syntax
 """"""
 
-
-.. parsed-literal::
+.. code-block:: LAMMPS
 
    pair_style none
 
 Examples
 """"""""
 
-
-.. parsed-literal::
+.. code-block:: LAMMPS
 
    pair_style none
 
@@ -32,27 +30,25 @@ skin distance is large enough to acquire atoms needed for computing
 bonds, angles, etc.
 
 A pair style of *none* will also prevent pairwise neighbor lists from
-being built.  However if the :doc:`neighbor <neighbor>` style is *bin*\ ,
+being built.  However if the :doc:`neighbor <neighbor>` style is *bin*,
 data structures for binning are still allocated.  If the neighbor skin
 distance is small, then these data structures can consume a large
 amount of memory.  So you should either set the neighbor style to
 *nsq* or set the skin distance to a larger value.
 
-See the :doc:`pair\_style zero <pair_zero>` for a way to trigger the
+See the :doc:`pair_style zero <pair_zero>` for a way to trigger the
 building of a neighbor lists, but compute no pairwise interactions.
 
 Restrictions
 """"""""""""
- none
+none
 
 Related commands
 """"""""""""""""
 
-:doc:`pair\_style zero <pair_zero>`
+:doc:`pair_style zero <pair_zero>`
 
-**Default:** none
+Default
+"""""""
 
-
-.. _lws: http://lammps.sandia.gov
-.. _ld: Manual.html
-.. _lc: Commands_all.html
+none

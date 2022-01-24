@@ -10,7 +10,7 @@ systems can be simulated in LAMMPS using three methods:
 * the adiabatic core-shell method, implemented in the
   :doc:`CORESHELL <Howto_coreshell>` package,
 * the thermalized Drude dipole method, implemented in the
-  :doc:`USER-DRUDE <Howto_drude>` package.
+  :doc:`DRUDE <Howto_drude>` package.
 
 The fluctuating charge method calculates instantaneous charges on
 interacting atoms based on the electronegativity equalization
@@ -71,8 +71,3 @@ temperature is regulated using the velocities of the center of mass of
 core+shell (or Drude) pairs, but in the Drude model the actual
 relative core-Drude particle motion is thermostatted separately as
 well.
-
-
-.. _lws: http://lammps.sandia.gov
-.. _ld: Manual.html
-.. _lc: Commands_all.html

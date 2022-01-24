@@ -6,7 +6,6 @@ compute pair/local command
 Syntax
 """"""
 
-
 .. parsed-literal::
 
    compute ID group-ID pair/local value1 value2 ... keyword args ...
@@ -14,30 +13,28 @@ Syntax
 * ID, group-ID are documented in :doc:`compute <compute>` command
 * pair/local = style name of this compute command
 * one or more values may be appended
-* value = *dist* or *eng* or *force* or *fx* or *fy* or *fz* or *pN*
-  
+* value = *dist* or *dx* or *dy* or *dz* or *eng* or *force* or *fx* or *fy* or *fz* or *pN*
+
   .. parsed-literal::
-  
+
        *dist* = pairwise distance
+       *dx*,\ *dy*,\ *dz* = components of pairwise distance
        *eng* = pairwise energy
        *force* = pairwise force
-       *fx*\ ,\ *fy*\ ,\ *fz* = components of pairwise force
+       *fx*,\ *fy*,\ *fz* = components of pairwise force
        *pN* = pair style specific quantities for allowed N values
 
 * zero or more keyword/arg pairs may be appended
 * keyword = *cutoff*
-  
+
   .. parsed-literal::
-  
+
        *cutoff* arg = *type* or *radius*
-
-
 
 Examples
 """"""""
 
-
-.. parsed-literal::
+.. code-block:: LAMMPS
 
    compute 1 all pair/local eng
    compute 1 all pair/local dist eng force
@@ -56,29 +53,32 @@ pairwise neighbor list.  Info about an individual pairwise interaction
 will only be included if both atoms in the pair are in the specified
 compute group, and if the current pairwise distance is less than the
 force cutoff distance for that interaction, as defined by the
-:doc:`pair\_style <pair_style>` and :doc:`pair\_coeff <pair_coeff>`
+:doc:`pair_style <pair_style>` and :doc:`pair_coeff <pair_coeff>`
 commands.
 
 The value *dist* is the distance between the pair of atoms.
+The values *dx*, *dy*, and *dz* are the xyz components of the
+*distance* between the pair of atoms. This value is always the
+distance from the atom of lower to the one with the higher id.
 
 The value *eng* is the interaction energy for the pair of atoms.
 
 The value *force* is the force acting between the pair of atoms, which
 is positive for a repulsive force and negative for an attractive
-force.  The values *fx*\ , *fy*\ , and *fz* are the xyz components of
+force.  The values *fx*, *fy*, and *fz* are the xyz components of
 *force* on atom I.
 
 A pair style may define additional pairwise quantities which can be
-accessed as *p1* to *pN*\ , where N is defined by the pair style.  Most
+accessed as *p1* to *pN*, where N is defined by the pair style.  Most
 pair styles do not define any additional quantities, so N = 0.  An
 example of ones that do are the :doc:`granular pair styles <pair_gran>`
 which calculate the tangential force between two particles and return
 its components and magnitude acting on atom I for N = 1,2,3,4.  See
 individual pair styles for details.
 
-When using *pN* with pair style *hybrid*\ , the output will be the Nth
+When using *pN* with pair style *hybrid*, the output will be the Nth
 quantity from the sub-style that computes the pairwise interaction
-(based on atom types).  If that sub-style does not define a *pN*\ ,
+(based on atom types).  If that sub-style does not define a *pN*,
 the output will be 0.0.  The maximum allowed N is the maximum number
 of quantities provided by any sub-style.
 
@@ -93,14 +93,14 @@ from the second of the two sub-styles.  If the referenced *pN*
 is not computed for the specific pairwise interaction (based on
 atom types), then the output will be 0.0.
 
-The value *dist* will be in distance :doc:`units <units>`.  The value
-*eng* will be in energy :doc:`units <units>`.  The values *force*\ , *fx*\ ,
-*fy*\ , and *fz* will be in force :doc:`units <units>`.  The values *pN*
-will be in whatever units the pair style defines.
+The value *dist*, *dx*, *dy* and *dz* will be in distance :doc:`units <units>`.
+The value *eng* will be in energy :doc:`units <units>`.
+The values *force*, *fx*, *fy*, and *fz* will be in force :doc:`units <units>`.
+The values *pN* will be in whatever units the pair style defines.
 
 The optional *cutoff* keyword determines how the force cutoff distance
-for an interaction is determined.  For the default setting of *type*\ ,
-the pairwise cutoff defined by the :doc:`pair\_style <pair_style>`
+for an interaction is determined.  For the default setting of *type*,
+the pairwise cutoff defined by the :doc:`pair_style <pair_style>`
 command for the types of the two atoms is used.  For the *radius*
 setting, the sum of the radii of the two particles is used as a
 cutoff.  For example, this is appropriate for granular particles which
@@ -119,8 +119,7 @@ command in a consistent way.
 
 Here is an example of how to do this:
 
-
-.. parsed-literal::
+.. code-block:: LAMMPS
 
    compute 1 all property/local patom1 patom2
    compute 2 all pair/local dist eng force
@@ -135,15 +134,16 @@ Here is an example of how to do this:
    specifically, this will be true of I,J pairs with a weighting factor
    of 0.0; pairs with a non-zero weighting factor are included.  The
    weighting factors for 1-2, 1-3, and 1-4 pairwise interactions are set
-   by the :doc:`special\_bonds <special_bonds>` command.  An exception is if
+   by the :doc:`special_bonds <special_bonds>` command.  An exception is if
    long-range Coulombics are being computed via the
-   :doc:`kspace\_style <kspace_style>` command, then atom pairs with
+   :doc:`kspace_style <kspace_style>` command, then atom pairs with
    weighting factors of zero are still included in the neighbor list, so
    that a portion of the long-range interaction contribution can be
    computed in the pair style.  Hence in that case, those atom pairs will
    be part of the local data created by this command.
 
-**Output info:**
+Output info
+"""""""""""
 
 This compute calculates a local vector or local array depending on the
 number of keywords.  The length of the vector or number of rows in the
@@ -151,12 +151,12 @@ array is the number of pairs.  If a single keyword is specified, a
 local vector is produced.  If two or more keywords are specified, a
 local array is produced where the number of columns = the number of
 keywords.  The vector or array can be accessed by any command that
-uses local values from a compute as input.  See the :doc:`Howto output <Howto_output>` doc page for an overview of LAMMPS output
+uses local values from a compute as input.  See the :doc:`Howto output <Howto_output>` page for an overview of LAMMPS output
 options.
 
 The output for *dist* will be in distance :doc:`units <units>`.  The
 output for *eng* will be in energy :doc:`units <units>`.  The output for
-*force*\ , *fx*\ , *fy*\ , and *fz* will be in force :doc:`units <units>`.
+*force*, *fx*, *fy*, and *fz* will be in force :doc:`units <units>`.
 The output for *pN* will be in whatever units the pair style defines.
 
 Restrictions
@@ -172,8 +172,3 @@ Default
 """""""
 
 The keyword default is cutoff = type.
-
-
-.. _lws: http://lammps.sandia.gov
-.. _ld: Manual.html
-.. _lc: Commands_all.html
