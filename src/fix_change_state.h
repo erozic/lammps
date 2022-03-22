@@ -44,20 +44,20 @@ class FixChangeState : public Fix {
   void restart(char *) override;
 
  private:
-  int nevery, ncycles, seed;
+  int nsteps, ncycles, seed;
 
   int ntypes;
   int *type_list;
   //int nmols;
   //Molecule *mol_list; ??
-  int asymflag;  // 0 = symmetric, 1 = asymmetric transition penalty matrix
+  int antisymflag;  // 1 = antisymmetric transition penalty matrix
   double **trans_pens;
 
   int regionflag; // 0 = anywhere in box, 1 = specific region
   int iregion;  // swap region
   char *idregion; // swap region ID
 
-  int ke_flag;  // yes = conserve ke, no = do not conserve ke
+  int ke_flag;  // 1 = conserve ke, 0 = do not conserve ke
 
   int nparticles;  // # of candidates on all procs
   int nparticles_local;  // # of candidates on this proc
@@ -75,12 +75,15 @@ class FixChangeState : public Fix {
   int local_atom_nmax;
   int *local_atom_list;
 
-  class RanPark *random_equal; //TODO ??
-  class RanPark *random_unequal; //TODO ??
+  class RanPark *random_global;
+  class RanPark *random_local;
 
-  class Compute *c_pe; //TODO ??
+  class Compute *c_pe;
 
-  void options(int, char **);
+  void options(int, char**);
+  auto readline(FILE*, char*);
+  int type_index(int);
+  void process_transitions_file(const char*, int);
   int attempt_change();
   double energy_full();
   int random_particle();
@@ -120,10 +123,25 @@ E: At least one atom of each type must be present to define charges.
 
 Self-explanatory.
 
-E: Cannot do change/state on atoms in atom_modify first group
+E: Must not reset timestep when restarting fix change/state
 
-This is a restriction due to the way atoms are organized in a list to
-enable the atom_modify first command. TODO why??
+Timestep of restart has to be same as current timestep
+
+E: Cannot open transition penalties file
+
+Self-explanatory.
+
+E: Invalid format of the transition penalties file
+
+Self-explanatory.
+
+E: Unexpected error reading the transition penalties file
+
+Self-explanatory.
+
+E: Illegal atom type in transition penalties file
+
+An atom type not stated in the "types" keyword is used
 
 TODO others...
 

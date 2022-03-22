@@ -18,6 +18,7 @@
 
 #include "fix_change_state.h"
 
+//TODO remove unnecessary headers
 #include "angle.h"
 #include "atom.h"
 #include "bond.h"
@@ -44,6 +45,8 @@
 #include <cfloat>
 #include <cstring>
 
+#define MAXLINE 256
+
 using namespace LAMMPS_NS;
 using namespace FixConst;
 
@@ -53,9 +56,9 @@ FixChangeState::FixChangeState(LAMMPS *lmp, int narg, char **arg) :
   Fix(lmp, narg, arg),
   type_list(nullptr), trans_pens(nullptr), idregion(nullptr),
   qtype(nullptr), sqrt_mass_ratio(nullptr), local_atom_list(nullptr),
-  random_equal(nullptr), random_unequal(nullptr), c_pe(nullptr)
+  random_global(nullptr), random_local(nullptr), c_pe(nullptr)
 {
-  if (narg < 13) error->all(FLERR,"Illegal fix atom/swap command");
+  if (narg < 13) error->all(FLERR,"Illegal fix change/state command");
 
   dynamic_group_allow = 1;
 
@@ -67,27 +70,44 @@ FixChangeState::FixChangeState(LAMMPS *lmp, int narg, char **arg) :
   time_depend = 1;
 
   // required args
-  nevery = utils::inumeric(FLERR, arg[3], false, lmp);
+  nsteps = utils::inumeric(FLERR, arg[3], false, lmp);
   ncycles = utils::inumeric(FLERR, arg[4], false, lmp);
   seed = utils::inumeric(FLERR, arg[5], false, lmp);
   double temperature = utils::numeric(FLERR, arg[6], false, lmp);
 
-  if (nevery <= 0) error->all(FLERR, "Illegal fix atom/swap command");
-  if (ncycles < 0) error->all(FLERR, "Illegal fix atom/swap command");
-  if (seed <= 0) error->all(FLERR, "Illegal fix atom/swap command");
-  if (temperature <= 0.0) error->all(FLERR, "Illegal fix atom/swap command");
+  if (nsteps <= 0)
+    error->all(FLERR, "Illegal fix change/state command (N <= 0)");
+  if (ncycles < 0)
+    error->all(FLERR, "Illegal fix change/state command (M <= 0)");
+  if (seed <= 0)
+    error->all(FLERR, "Illegal fix change/state command (seed <= 0)");
+  if (temperature <= 0.0)
+    error->all(FLERR, "Illegal fix change/state command (T <= 0.0)");
 
   beta = 1.0/(force->boltz*temperature);
 
   options(narg-7, &arg[7]);
 
+  if (antisymflag) {
+    for (int itype=0; itype < ntypes; itype++) {
+      for (int jtype=itype+1; jtype < ntypes; jtype++) {
+        double pen_ij = trans_pens[itype][jtype];
+        double pen_ji = trans_pens[jtype][itype];
+        if (pen_ij != 0.0 && pen_ji == 0.0)
+          trans_pens[jtype][itype] = -pen_ij;
+        else if (pen_ij == 0.0 && pen_ji != 0.0)
+          trans_pens[itype][jtype] = -pen_ji;
+      }
+    }
+  }
+
   // random number generator, same for all procs
-  random_equal = new RanPark(lmp,seed);
+  random_global = new RanPark(lmp,seed);
 
   // random number generator, not the same for all procs
-  random_unequal = new RanPark(lmp,seed);
+  random_local = new RanPark(lmp,seed);
 
-  //TODO why this?
+  //TODO why does reneighboring have to be hardcoded/forced?
   force_reneighbor = 1;
   next_reneighbor = update->ntimestep + 1;
 
@@ -111,9 +131,33 @@ FixChangeState::~FixChangeState()
   memory->destroy(sqrt_mass_ratio);
   memory->destroy(local_atom_list);
   if (regionflag) delete [] idregion;
-  delete random_equal;
-  delete random_unequal;
+  delete random_global;
+  delete random_local;
   delete c_pe;
+}
+
+/* ----------------------------------------------------------------------
+   Returns the index of "atom type" in the type_list
+------------------------------------------------------------------------- */
+int FixChangeState::type_index(int atom_type)
+{
+  int typeindex = -1;
+  for (int itype = 0; i < ntypes; i++){
+    typeindex = itype;
+    if (type_list[itype] == atom_type)
+      break;
+  }
+  return typeindex;
+}
+
+/* ----------------------------------------------------------------------
+   Read a clean, single line of text from the input file
+------------------------------------------------------------------------- */
+auto FixChangeState::readline(FILE *fp, char *rawline)
+{
+  if (fgets(rawline, MAXLINE, fp) == nullptr)
+    error->one(FLERR, "Unexpected error reading the transition penalties file");
+  return utils::trim(utils::trim_comment(rawline));
 }
 
 /* ----------------------------------------------------------------------
@@ -123,7 +167,7 @@ void FixChangeState::options(int narg, char **arg)
 {
   if (narg < 6) error->all(FLERR, "Illegal fix change/state command");
 
-  asymflag = 0;
+  antisymflag = 0;
   regionflag = 0;
   ke_flag = 1;
   ntypes = 0;
@@ -132,51 +176,123 @@ void FixChangeState::options(int narg, char **arg)
   int iarg = 0;
   while (iarg < narg) {
     if (strcmp(arg[iarg],"types") == 0) {
-      if (iarg+3 > narg) error->all(FLERR, "Illegal fix atom/swap command");
+      if (iarg+3 > narg) error->all(FLERR, "Illegal fix change/state command");
       iarg++;
       while (iarg+ntypes < narg) {
         if (isalpha(arg[iarg+ntypes][0])) break;
         ntypes++;
       }
+      if (nytpes < 2)
+        error->all(FLERR, "Illegal fix change/state command: < 2 types");
       if (ntypes >= atom->ntypes)
-        error->all(FLERR, "Illegal fix atom/swap command: too many types");
+        error->all(FLERR, "Illegal fix change/state command: too many types");
       memory->create(type_list, ntypes, "change/state:type_list");
-      for (int itype=0; itype < ntypes; itype++){
+      // makes sense to create and initialise the trans_pens matrix here too...
+      memory->create(trans_pens, ntypes, ntypes, "change/state:trans_pens");
+      for (int itype=0; itype < ntypes; itype++) {
         type_list[itype] = utils::inumeric(FLERR, arg[iarg+itype], false, lmp);
         if (type_list[itype] <= 0 || type_list[itype] > atom->ntypes)
-          error->all(FLERR, "Illegal fix atom/swap command: type out of range");
+          error->all(FLERR, "Illegal fix change/state command: type out of range");
+        for (int jtype=0; jtype < itype; jtype++) {
+          if (type_list[jtype] == type_list[itype])
+            error->all(FLERR, "Illegal fix change/state command: repeated type");
+          trans_pens[itype][jtype] = trans_pens[jtype][itype] = 0.0;
+        }
+        trans_pens[itype][itype] = 0.0;
       }
       iarg += ntypes
     } else if (strcmp(arg[iarg],"trans_pens") == 0) {
-      //TODO ...
-      iarg += 3;
+      if (iarg+2 > narg)
+        error->all(FLERR, "Illegal fix change/state command (trans_pens)");
+      process_transitions_file(arg[iarg+1], 0);
+      MPI_Bcast(&trans_pens, ntypes*ntypes, MPI_DOUBLE, 0, world);
+      iarg += 2;
+      // optional additional argument to "trans_pens" keyword
+      if (iarg < narg && strcmp(arg[iarg],"antisym") == 0) {
+        antisymflag = 1;
+        iarg++;
+      }
     } else if (strcmp(arg[iarg],"region") == 0) {
-      if (iarg+2 > narg) error->all(FLERR, "Illegal fix atom/swap command");
+      if (iarg+2 > narg)
+        error->all(FLERR, "Illegal fix change/state command (region)");
       iregion = domain->find_region(arg[iarg+1]);
       if (iregion == -1)
-        error->all(FLERR, "Region ID for fix atom/swap does not exist");
+        error->all(FLERR, "Region ID for fix change/state does not exist");
       idregion = utils::strdup(arg[iarg+1]);
       regionflag = 1;
       iarg += 2;
     } else if (strcmp(arg[iarg],"ke") == 0) {
-      if (iarg+2 > narg) error->all(FLERR,"Illegal fix atom/swap command");
-      ke_flag = utils::logical(FLERR,arg[iarg+1],false,lmp);
+      if (iarg+2 > narg)
+        error->all(FLERR,"Illegal fix change/state command (ke)");
+      ke_flag = utils::logical(FLERR, arg[iarg+1], false, lmp);
       iarg += 2;
-    } else error->all(FLERR, "Illegal fix atom/swap command: unknown option");
+    } else
+      error->all(FLERR, "Illegal fix change/state command: unknown option");
   }
 }
 
-/* ---------------------------------------------------------------------- */
-//TODO
-int FixChangeState::setmask()
+/* ----------------------------------------------------------------------
+   parse the transition penalties file (only proc with given rank)
+------------------------------------------------------------------------- */
+void FixChangeState::process_transitions_file(const char *filename, int rank)
 {
-  int mask = 0;
-  mask |= PRE_EXCHANGE;
-  return mask;
+  if (comm->me != rank)
+    return;
+
+  FILE *fp = fopen(filename, "r");
+  if (fp == nullptr)
+    error->one(FLERR, "Cannot open transition penalties file {}: {}",
+        filename, utils::getsyserror());
+
+  char *rawline[MAXLINE];
+  std:string line;
+  int ntransitions = 0;
+  // skip 1st line of file
+  line = readline(fp, rawline);
+
+  while (true) {
+    line = readline(fp, rawline);
+    if (line.empty())
+      continue; //skip empty lines and comment lines
+    try {
+      ValueTokenizer values(line);
+      if (values.count() != 3)
+        error->one(FLERR, "Invalid format of the transition penalties file");
+      int typeindex1 = type_index(values.next_int());
+      int typeindex2 = type_index(values.next_int());
+      double penalty = values.next_double();
+      if (typeindex1 < 0 || typeindex2 < 0)
+        error->one(FLERR, "Illegal atom type in transition penalties file");
+      trans_pens[typeindex1][typeindex2] = penalty;
+      ntransitions++;
+    } catch (TokenizerException &e) {
+      error->one(FLERR, "Invalid format of the transition penalties file: {}",
+          e.what());
+    }
+    if (feof(fp))
+      break;
+  }
+
+  fclose(fp);
+
+  std::string pen_mat_str = "";
+  for (int i=0; i < ntypes; i++) {
+    pen_mat_str += fmt::format("  |{: .2f}|", trans_pens[i][0]);
+    for (int j=1; j < ntypes; j++)
+      pen_mat_str += fmt::format("{: .2f}|", trans_pens[i][j]);
+    pen_mat_str += "\n";
+  }
+  utils::logmesg(lmp, "Transition matrix from file {}:\n{}",
+      filename, pen_mat_str);
 }
 
 /* ---------------------------------------------------------------------- */
-//TODO
+int FixChangeState::setmask()
+{
+  return PRE_EXCHANGE; //TODO anything to add? Use ... | ... | ...
+}
+
+/* ---------------------------------------------------------------------- */
 void FixChangeState::init()
 {
   char *id_pe = (char *) "thermo_pe";
@@ -229,11 +345,12 @@ void FixChangeState::init()
       sqrt_mass_ratio[itype][jtype] = sqrt(atom->mass[itype]/atom->mass[jtype]);
 
   // check to see if itype and jtype cutoffs are the same
-  // if not, reneighboring will be needed between swaps
+  // if not, reneighboring will be needed after state changes
+  //TODO should this be hardcoded/forced?
   double **cutsq = force->pair->cutsq;
   unequal_cutoffs = false;
   for (int itype = 0; itype < ntypes; itype++){
-    for (int jtype = 0; jtype < ntypes; jtype++){
+    for (int jtype = itype + 1; jtype < ntypes; jtype++){
       for (int ktype = 1; ktype <= atom->ntypes; ktype++){
         if (cutsq[type_list[itype]][ktype] != cutsq[type_list[jtype]][ktype]){
           unequal_cutoffs = true;
@@ -244,44 +361,25 @@ void FixChangeState::init()
     }
     if (unequal_cutoffs) break;
   }
-
-  // check that no swappable atoms are in atom->firstgroup
-  // swapping such an atom might not leave firstgroup atoms first
-  //TODO why??
-  if (atom->firstgroup >= 0) {
-    int *mask = atom->mask;
-    int firstgroupbit = group->bitmask[atom->firstgroup];
-
-    int flag = 0;
-    for (int i = 0; i < atom->nlocal; i++)
-      if ((mask[i] == groupbit) && (mask[i] && firstgroupbit))
-        flag = 1;
-
-    int flagall;
-    MPI_Allreduce(&flag, &flagall, 1, MPI_INT, MPI_SUM, world);
-    if (flagall)
-      error->all(FLERR,"Cannot do change/state on atoms in atom_modify first group");
-  }
 }
 
 /* ----------------------------------------------------------------------
-   TODO this is where the magic happens
+   This is where the magic happens... TODO why here exactly?
 ------------------------------------------------------------------------- */
 void FixChangeState::pre_exchange()
 {
   // just return if should not be called on this timestep
-
+  //TODO why use neighboring as a reference?
   if (next_reneighbor != update->ntimestep) return;
 
   // insure current system is ready to compute energy
-
   if (domain->triclinic) domain->x2lamda(atom->nlocal);
   domain->pbc();
   comm->exchange();
   comm->borders();
   if (domain->triclinic) domain->lamda2x(atom->nlocal+atom->nghost);
   if (modify->n_pre_neighbor) modify->pre_neighbor();
-  neighbor->build(1);
+  neighbor->build(1); //TODO ?
 
   energy_stored = energy_full();
 
@@ -294,12 +392,13 @@ void FixChangeState::pre_exchange()
   nattempts += ncycles;
   nsuccesses += nsuccess;
 
-  next_reneighbor = update->ntimestep + nevery;
+  //TODO why forcing reneighboring after each call of fix?
+  next_reneighbor = update->ntimestep + nsteps;
 }
 
 /* ----------------------------------------------------------------------
- * TODO attempt Monte Carlo change of states
-   compare before/after energy and accept/reject the change
+   Attempt a Monte Carlo change of states...
+
    NOTE: atom charges are assumed equal and so are not updated
 ------------------------------------------------------------------------- */
 int FixChangeState::attempt_change()
@@ -313,13 +412,9 @@ int FixChangeState::attempt_change()
   int i = random_particle();
   if (i >= 0) {
     newtype = oldtype = atom->type[i];
-    for (int itype = 0; i < ntypes; i++){
-      oldtypeindex = itype;
-      if (type_list[itype] == oldtype)
-        break;
-    }
+    oldtypeindex = type_index(oldtype);
     while (newtype == oldtype) {
-      newtypeindex = static_cast<int>(ntypes*random_unequal->uniform());
+      newtypeindex = static_cast<int>(ntypes*random_local->uniform());
       newtype = type_list[newtypeindex];
     }
     atom->type[i] = newtype;
@@ -347,33 +442,33 @@ int FixChangeState::attempt_change()
   if (i >= 0) {
     double boltzmann_factor = exp(beta*(energy_before - energy_after) -
         trans_pens[oldtypeindex][newtypeindex]);
-    if (random_unequal->uniform() < boltzmann_factor)
+    if (random_local->uniform() < boltzmann_factor)
       success = 1;
   }
   int success_all = 0;
   MPI_Allreduce(&success, &success_all, 1, MPI_INT, MPI_MAX, world);
 
   if (success_all) {
-    update_atom_list();
+    //update_atom_list(); unnecessary, only type changes, not position...
     energy_stored = energy_after;
-    if (ke_flag) {
-      if (i >= 0) {
-        atom->v[i][0] *= sqrt_mass_ratio[oldtype][newtype];
-        atom->v[i][1] *= sqrt_mass_ratio[oldtype][newtype];
-        atom->v[i][2] *= sqrt_mass_ratio[oldtype][newtype];
-      }
+    if (ke_flag && i >= 0) {
+      atom->v[i][0] *= sqrt_mass_ratio[oldtype][newtype];
+      atom->v[i][1] *= sqrt_mass_ratio[oldtype][newtype];
+      atom->v[i][2] *= sqrt_mass_ratio[oldtype][newtype];
     }
-    return 1;
   } else {
     if (i >= 0) atom->type[i] = oldtype;
-    if (force->kspace) force->kspace->qsum_qsq(); //TODO why?
-    return 0;
+    if (force->kspace) force->kspace->qsum_qsq(); //TODO ?
   }
+  return success_all;
 }
 
 /* ----------------------------------------------------------------------
-   TODO compute system potential energy
-   TODO check if optimal...
+   Compute system potential energy
+
+   TODO is this optimal? For a local change maybe it's enough to calculate
+   the local change in energy (if not kspace...)? Check how you ddi it in
+   library, how it's done in gcmc and other fixes...
 ------------------------------------------------------------------------- */
 double FixChangeState::energy_full()
 {
@@ -402,12 +497,14 @@ double FixChangeState::energy_full()
 }
 
 /* ----------------------------------------------------------------------
-   TODO Return a random atom ID (-1 if not local)
+   Select a random atom
+
+   Returns the local index of atom or -1 if atom not local.
 ------------------------------------------------------------------------- */
 int FixChangeState::random_particle()
 {
   int i = -1;
-  int iwhichglobal = static_cast<int> (nparticles*random_equal->uniform());
+  int iwhichglobal = static_cast<int> (nparticles*random_global->uniform());
   if ((iwhichglobal >= nparticles_before) &&
       (iwhichglobal < nparticles_before + nparticles_local)) {
     int iwhichlocal = iwhichglobal - nparticles_before;
@@ -417,7 +514,7 @@ int FixChangeState::random_particle()
 }
 
 /* ----------------------------------------------------------------------
-   TODO update the list of gas atoms
+   Update the local list of atoms
 ------------------------------------------------------------------------- */
 
 void FixChangeState::update_atom_list()
@@ -465,8 +562,7 @@ void FixChangeState::update_atom_list()
   }
 
   MPI_Allreduce(&nparticles_local, &nparticles, 1, MPI_INT, MPI_SUM, world);
-  MPI_Scan(&nnparticles_local, &nparticles_before, 1, MPI_INT, MPI_SUM, world);
-  nparticles_before -= nparticles_local;
+  MPI_Exscan(&nparticles_local, &nparticles_before, 1, MPI_INT, MPI_SUM, world);
 }
 
 /* ---------------------------------------------------------------------- */
@@ -520,7 +616,9 @@ void FixChangeState::unpack_forward_comm(int n, int first, double *buf)
 }
 
 /* ----------------------------------------------------------------------
-  TODO return acceptance ratio
+  Returns:
+   0: total number of attempts in the run
+   1: total number of successful attempts in the run
 ------------------------------------------------------------------------- */
 double FixChangeState::compute_vector(int n)
 {
@@ -530,7 +628,7 @@ double FixChangeState::compute_vector(int n)
 }
 
 /* ----------------------------------------------------------------------
-   TODO memory usage of local atom-based arrays
+   Memory usage of local atom-based arrays
 ------------------------------------------------------------------------- */
 double FixChangeState::memory_usage()
 {
@@ -539,17 +637,17 @@ double FixChangeState::memory_usage()
 }
 
 /* ----------------------------------------------------------------------
-   TODO pack entire state of Fix into one write
+   Pack entire state of Fix into one write
 ------------------------------------------------------------------------- */
 void FixChangeState::write_restart(FILE *fp)
 {
   int n = 0;
   double list[6];
-  list[n++] = random_equal->state();
-  list[n++] = random_unequal->state();
+  list[n++] = random_global->state();
+  list[n++] = random_local->state();
   list[n++] = ubuf(next_reneighbor).d;
-  list[n++] = nattempts;
-  list[n++] = nsuccesses;
+  list[n++] = ubuf(nattempts).d;
+  list[n++] = ubuf(nsuccesses).d;
   list[n++] = ubuf(update->ntimestep).d;
 
   if (comm->me == 0) {
@@ -560,7 +658,7 @@ void FixChangeState::write_restart(FILE *fp)
 }
 
 /* ----------------------------------------------------------------------
-   TODO use state info from restart file to restart the Fix
+   Use state info from restart file to restart the Fix
 ------------------------------------------------------------------------- */
 void FixChangeState::restart(char *buf)
 {
@@ -568,17 +666,17 @@ void FixChangeState::restart(char *buf)
   double *list = (double *) buf;
 
   seed = static_cast<int> (list[n++]);
-  random_equal->reset(seed);
+  random_global->reset(seed);
 
   seed = static_cast<int> (list[n++]);
-  random_unequal->reset(seed);
+  random_local->reset(seed);
 
   next_reneighbor = (bigint) ubuf(list[n++]).i;
 
-  nattempts = static_cast<int>(list[n++]);
-  nsuccesses = static_cast<int>(list[n++]);
+  nattempts = ubuf(list[n++]).i;
+  nsuccesses = ubuf(list[n++]).i;
 
   bigint ntimestep_restart = (bigint) ubuf(list[n++]).i;
   if (ntimestep_restart != update->ntimestep)
-    error->all(FLERR,"Must not reset timestep when restarting fix atom/swap");
+    error->all(FLERR,"Must not reset timestep when restarting fix change/state");
 }
