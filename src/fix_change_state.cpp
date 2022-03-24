@@ -18,7 +18,6 @@
 
 #include "fix_change_state.h"
 
-//TODO remove unnecessary headers
 #include "angle.h"
 #include "atom.h"
 #include "bond.h"
@@ -38,6 +37,7 @@
 #include "pair.h"
 #include "random_park.h"
 #include "region.h"
+#include "tokenizer.h"
 #include "update.h"
 
 #include <cmath>
@@ -55,7 +55,7 @@ using namespace FixConst;
 FixChangeState::FixChangeState(LAMMPS *lmp, int narg, char **arg) :
   Fix(lmp, narg, arg),
   type_list(nullptr), trans_pens(nullptr), idregion(nullptr),
-  qtype(nullptr), sqrt_mass_ratio(nullptr), local_atom_list(nullptr),
+  sqrt_mass_ratio(nullptr), local_atom_list(nullptr),
   random_global(nullptr), random_local(nullptr), c_pe(nullptr)
 {
   if (narg < 13) error->all(FLERR,"Illegal fix change/state command");
@@ -77,7 +77,7 @@ FixChangeState::FixChangeState(LAMMPS *lmp, int narg, char **arg) :
 
   if (nsteps <= 0)
     error->all(FLERR, "Illegal fix change/state command (N <= 0)");
-  if (ncycles < 0)
+  if (ncycles <= 0)
     error->all(FLERR, "Illegal fix change/state command (M <= 0)");
   if (seed <= 0)
     error->all(FLERR, "Illegal fix change/state command (seed <= 0)");
@@ -99,6 +99,16 @@ FixChangeState::FixChangeState(LAMMPS *lmp, int narg, char **arg) :
           trans_pens[itype][jtype] = -pen_ji;
       }
     }
+  }
+  if (comm->me == 0) {
+    std::string pen_mat_str = "";
+    for (int i=0; i < ntypes; i++) {
+      pen_mat_str += fmt::format(" |{: .2f}|", trans_pens[i][0]);
+      for (int j=1; j < ntypes; j++)
+        pen_mat_str += fmt::format("{: .2f}|", trans_pens[i][j]);
+      pen_mat_str += "\n";
+    }
+    utils::logmesg(lmp, "Transition matrix from file:\n{}", pen_mat_str);
   }
 
   // random number generator, same for all procs
@@ -127,22 +137,20 @@ FixChangeState::~FixChangeState()
 {
   memory->destroy(type_list);
   memory->destroy(trans_pens);
-  memory->destroy(qtype);
-  memory->destroy(sqrt_mass_ratio);
   memory->destroy(local_atom_list);
+  memory->destroy(sqrt_mass_ratio);
   if (regionflag) delete [] idregion;
   delete random_global;
   delete random_local;
-  delete c_pe;
 }
 
 /* ----------------------------------------------------------------------
-   Returns the index of "atom type" in the type_list
+   Returns the index of "atom type" in the type_list (or -1 if not there)
 ------------------------------------------------------------------------- */
 int FixChangeState::type_index(int atom_type)
 {
   int typeindex = -1;
-  for (int itype = 0; i < ntypes; i++){
+  for (int itype = 0; itype < ntypes; itype++){
     typeindex = itype;
     if (type_list[itype] == atom_type)
       break;
@@ -151,17 +159,23 @@ int FixChangeState::type_index(int atom_type)
 }
 
 /* ----------------------------------------------------------------------
-   Read a clean, single line of text from the input file
+   Read a line of text from the input file and return it trimmed
+   (without comments and extra spaces).
+   Returns "EOF" as an std::string if it reached the end of file.
 ------------------------------------------------------------------------- */
-auto FixChangeState::readline(FILE *fp, char *rawline)
+std::string FixChangeState::readline(FILE *fp, char *rawline)
 {
-  if (fgets(rawline, MAXLINE, fp) == nullptr)
-    error->one(FLERR, "Unexpected error reading the transition penalties file");
+  if (fgets(rawline, MAXLINE, fp) == nullptr) {
+    if (feof(fp))
+      return "EOF";
+    else
+      error->one(FLERR, "Unexpected error reading the transition penalties file");
+  }
   return utils::trim(utils::trim_comment(rawline));
 }
 
 /* ----------------------------------------------------------------------
-   parse optional parameters at end of input line
+   Parse optional parameters at end of input line
 ------------------------------------------------------------------------- */
 void FixChangeState::options(int narg, char **arg)
 {
@@ -169,7 +183,7 @@ void FixChangeState::options(int narg, char **arg)
 
   antisymflag = 0;
   regionflag = 0;
-  ke_flag = 1;
+  ke_flag = 0;
   ntypes = 0;
   iregion = -1;
 
@@ -182,9 +196,9 @@ void FixChangeState::options(int narg, char **arg)
         if (isalpha(arg[iarg+ntypes][0])) break;
         ntypes++;
       }
-      if (nytpes < 2)
+      if (ntypes < 2)
         error->all(FLERR, "Illegal fix change/state command: < 2 types");
-      if (ntypes >= atom->ntypes)
+      if (ntypes > atom->ntypes)
         error->all(FLERR, "Illegal fix change/state command: too many types");
       memory->create(type_list, ntypes, "change/state:type_list");
       // makes sense to create and initialise the trans_pens matrix here too...
@@ -200,12 +214,12 @@ void FixChangeState::options(int narg, char **arg)
         }
         trans_pens[itype][itype] = 0.0;
       }
-      iarg += ntypes
+      iarg += ntypes;
     } else if (strcmp(arg[iarg],"trans_pens") == 0) {
       if (iarg+2 > narg)
         error->all(FLERR, "Illegal fix change/state command (trans_pens)");
       process_transitions_file(arg[iarg+1], 0);
-      MPI_Bcast(&trans_pens, ntypes*ntypes, MPI_DOUBLE, 0, world);
+      MPI_Bcast(*trans_pens, ntypes*ntypes, MPI_DOUBLE, 0, world);
       iarg += 2;
       // optional additional argument to "trans_pens" keyword
       if (iarg < narg && strcmp(arg[iarg],"antisym") == 0) {
@@ -244,14 +258,17 @@ void FixChangeState::process_transitions_file(const char *filename, int rank)
     error->one(FLERR, "Cannot open transition penalties file {}: {}",
         filename, utils::getsyserror());
 
-  char *rawline[MAXLINE];
-  std:string line;
+  char rawline[MAXLINE];
+  std::string line;
   int ntransitions = 0;
   // skip 1st line of file
+  int linenum = 1;
   line = readline(fp, rawline);
 
   while (true) {
     line = readline(fp, rawline);
+    if (line == "EOF")
+      break;
     if (line.empty())
       continue; //skip empty lines and comment lines
     try {
@@ -269,21 +286,9 @@ void FixChangeState::process_transitions_file(const char *filename, int rank)
       error->one(FLERR, "Invalid format of the transition penalties file: {}",
           e.what());
     }
-    if (feof(fp))
-      break;
   }
 
   fclose(fp);
-
-  std::string pen_mat_str = "";
-  for (int i=0; i < ntypes; i++) {
-    pen_mat_str += fmt::format("  |{: .2f}|", trans_pens[i][0]);
-    for (int j=1; j < ntypes; j++)
-      pen_mat_str += fmt::format("{: .2f}|", trans_pens[i][j]);
-    pen_mat_str += "\n";
-  }
-  utils::logmesg(lmp, "Transition matrix from file {}:\n{}",
-      filename, pen_mat_str);
 }
 
 /* ---------------------------------------------------------------------- */
@@ -302,47 +307,33 @@ void FixChangeState::init()
   int *type = atom->type;
 
   if (ntypes < 2)
-    error->all(FLERR, "Must specify at least 2 types in fix change/state");
+    error->all(FLERR, "Illegal fix change/state command: < 2 types");
 
-  //TODO check everything neccessary is defined...
-
-  //check charge
+  // check all mol templates have same charge
+  // (irrelevant for atomic simulations - can't change total charge of a single
+  // atom, but "charge redistribution" makes sense for molecules)
   if (atom->q_flag) {
-    double qmax, qmin;
-    int firstall, first;
-    memory->create(qtype, ntypes, "change/state:qtype");
-    for (int itype = 0; itype < ntypes; itype++) {
-      first = 1;
-      for (int i = 0; i < atom->nlocal; i++) {
-        if (!(atom->mask[i] & groupbit))
-          continue;
-        if (type[i] == type_list[itype]) {
-          if (first) {
-            qtype[itype] = atom->q[i];
-            first = 0;
-          } else if (qtype[itype] != atom->q[i]) {
-            error->one(FLERR, "Atoms of all types must have the same charge.");
-          }
-        }
-      }
-      MPI_Allreduce(&first, &firstall, 1, MPI_INT, MPI_MIN, world);
-      if (firstall)
-        error->all(FLERR, "At least one atom of each type must be present to define charges.");
-      if (first)
-        qtype[itype] = -DBL_MAX;
-      MPI_Allreduce(&qtype[itype], &qmax, 1, MPI_DOUBLE, MPI_MAX, world);
-      if (first)
-        qtype[itype] = DBL_MAX;
-      MPI_Allreduce(&qtype[itype], &qmin, 1, MPI_DOUBLE, MPI_MIN, world);
-      if (qmax != qmin)
-        error->all(FLERR, "Atoms of all types must have the same charge.");
-    }
+    //TODO
   }
 
-  memory->create(sqrt_mass_ratio, atom->ntypes+1, atom->ntypes+1, "change/state:sqrt_mass_ratio");
-  for (int itype = 1; itype <= atom->ntypes; itype++)
-    for (int jtype = 1; jtype <= atom->ntypes; jtype++)
-      sqrt_mass_ratio[itype][jtype] = sqrt(atom->mass[itype]/atom->mass[jtype]);
+  if (ke_flag) {
+    memory->create(sqrt_mass_ratio, ntypes, ntypes, "change/state:sqrt_mass_ratio");
+    for (int itype = 0; itype < ntypes; itype++) {
+      for (int jtype = 0; jtype < ntypes; jtype++) {
+        double imass =  atom->mass[type_list[itype]];
+        double jmass =  atom->mass[type_list[jtype]];
+        sqrt_mass_ratio[itype][jtype] = sqrt(imass/jmass);
+      }
+    }
+  } else {
+    double atom_mass = atom->mass[type_list[0]];
+    for (int itype = 1; itype < ntypes; itype++) {
+      if (atom->mass[type_list[itype]] != atom_mass) {
+        error->warning(FLERR, "Not all types have same mass (and 'ke' conservation is off)");
+        break;
+      }
+    }
+  }
 
   // check to see if itype and jtype cutoffs are the same
   // if not, reneighboring will be needed after state changes
@@ -418,7 +409,6 @@ int FixChangeState::attempt_change()
       newtype = type_list[newtypeindex];
     }
     atom->type[i] = newtype;
-    //TODO anything else to change?
   }
 
   // if unequal_cutoffs, call comm->borders() and rebuild neighbor list
@@ -452,9 +442,9 @@ int FixChangeState::attempt_change()
     //update_atom_list(); unnecessary, only type changes, not position...
     energy_stored = energy_after;
     if (ke_flag && i >= 0) {
-      atom->v[i][0] *= sqrt_mass_ratio[oldtype][newtype];
-      atom->v[i][1] *= sqrt_mass_ratio[oldtype][newtype];
-      atom->v[i][2] *= sqrt_mass_ratio[oldtype][newtype];
+      atom->v[i][0] *= sqrt_mass_ratio[oldtypeindex][newtypeindex];
+      atom->v[i][1] *= sqrt_mass_ratio[oldtypeindex][newtypeindex];
+      atom->v[i][2] *= sqrt_mass_ratio[oldtypeindex][newtypeindex];
     }
   } else {
     if (i >= 0) atom->type[i] = oldtype;
@@ -566,7 +556,7 @@ void FixChangeState::update_atom_list()
 }
 
 /* ---------------------------------------------------------------------- */
-//TODO
+//TODO why is this necessary? Adn why only type and charge?
 int FixChangeState::pack_forward_comm(int n, int *list, double *buf, int /*pbc_flag*/, int * /*pbc*/)
 {
   int i,j,m;
@@ -593,7 +583,7 @@ int FixChangeState::pack_forward_comm(int n, int *list, double *buf, int /*pbc_f
 }
 
 /* ---------------------------------------------------------------------- */
-//TODO
+//TODO why is this necessary? Adn why only type and charge?
 void FixChangeState::unpack_forward_comm(int n, int first, double *buf)
 {
   int i,m,last;

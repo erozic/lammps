@@ -17,7 +17,7 @@
 
 #ifdef FIX_CLASS
 // clang-format off
-FixStyle(change/state,FixChangeState);
+FixStyle(change/state, FixChangeState);
 // clang-format on
 #else
 
@@ -30,7 +30,6 @@ namespace LAMMPS_NS {
 
 class FixChangeState : public Fix {
  public:
-  //TODO see if I need any more of these, or if I don't some of these...
   FixChangeState(class LAMMPS *, int, char **);
   ~FixChangeState() override;
   int setmask() override;
@@ -49,7 +48,7 @@ class FixChangeState : public Fix {
   int ntypes;
   int *type_list;
   //int nmols;
-  //Molecule *mol_list; ??
+  //Molecule *mol_list;
   int antisymflag;  // 1 = antisymmetric transition penalty matrix
   double **trans_pens;
 
@@ -69,7 +68,6 @@ class FixChangeState : public Fix {
   bool unequal_cutoffs;
 
   double beta;
-  double *qtype;
   double energy_stored;
   double **sqrt_mass_ratio;
   int local_atom_nmax;
@@ -81,7 +79,7 @@ class FixChangeState : public Fix {
   class Compute *c_pe;
 
   void options(int, char**);
-  auto readline(FILE*, char*);
+  std::string readline(FILE*, char*);
   int type_index(int);
   void process_transitions_file(const char*, int);
   int attempt_change();
@@ -142,6 +140,10 @@ Self-explanatory.
 E: Illegal atom type in transition penalties file
 
 An atom type not stated in the "types" keyword is used
+
+W: Not all types have same mass (and 'ke' conservation is off)
+
+Self-explanatory.
 
 TODO others...
 
