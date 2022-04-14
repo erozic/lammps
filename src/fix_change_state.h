@@ -45,12 +45,19 @@ class FixChangeState : public Fix {
  private:
   int nsteps, ncycles, seed;
 
+  typedef struct penalty_pair { // convenience structure...
+      int stateindex; //index of a "state", i.e. an atom type or mol template
+      double penalty;
+  } penalty_pair;
+
   int ntypes;
   int *type_list;
   //int nmols;
   //Molecule *mol_list;
   int antisymflag;  // 1 = antisymmetric transition penalty matrix
-  double **trans_pens;
+  double **trans_matrix;
+  int *ntrans;
+  penalty_pair **transition;
 
   int regionflag; // 0 = anywhere in box, 1 = specific region
   int iregion;  // swap region
@@ -79,13 +86,13 @@ class FixChangeState : public Fix {
   class Compute *c_pe;
 
   void options(int, char**);
+  void process_transitions_file(const char*, int);
   std::string readline(FILE*, char*);
   int type_index(int);
-  void process_transitions_file(const char*, int);
-  int attempt_change();
-  double energy_full();
-  int random_particle();
   void update_atom_list();
+  int random_particle();
+  int attempt_atom_type_change();
+  double energy_full(bool);
 };
 
 }    // namespace LAMMPS_NS
@@ -141,9 +148,17 @@ E: Illegal atom type in transition penalties file
 
 An atom type not stated in the "types" keyword is used
 
+E: Undeclared atom type found in the fix group
+
+An atom in the fix group has a type not specified by the "types" keyword
+
 W: Not all types have same mass (and 'ke' conservation is off)
 
 Self-explanatory.
+
+W: No transitions defined for atom/mol type X
+
+This atom/mol type/template can't transition to any other "state"
 
 TODO others...
 
