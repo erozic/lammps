@@ -34,7 +34,7 @@ class FixChangeState : public Fix {
   ~FixChangeState() override;
   int setmask() override;
   void init() override;
-  void pre_exchange() override;
+  void post_neighbor() override;
   int pack_forward_comm(int, int *, double *, int, int *) override;
   void unpack_forward_comm(int, int, double *) override;
   double compute_vector(int) override;
@@ -63,6 +63,7 @@ class FixChangeState : public Fix {
   int iregion;  // swap region
   char *idregion; // swap region ID
 
+  int full_flag; // 1 = full (global) PE calc, 0 = single (local) PE calc
   int ke_flag;  // 1 = conserve ke, 0 = do not conserve ke
 
   int nparticles;  // # of candidates on all procs
@@ -72,10 +73,10 @@ class FixChangeState : public Fix {
   int nattempts;
   int nsuccesses;
 
-  bool unequal_cutoffs;
+  //bool unequal_cutoffs; TODO remove
 
   double beta;
-  double energy_stored;
+  double curr_global_pe;
   double **sqrt_mass_ratio;
   int local_atom_nmax;
   int *local_atom_list;
@@ -91,8 +92,10 @@ class FixChangeState : public Fix {
   int type_index(int);
   void update_atom_list();
   int random_particle();
-  int attempt_atom_type_change();
-  double energy_full(bool);
+  int attempt_atom_type_change_local();
+  int attempt_atom_type_change_global();
+  double interaction_energy_local(int);
+  double total_energy_global();
 };
 
 }    // namespace LAMMPS_NS
@@ -159,6 +162,10 @@ Self-explanatory.
 W: No transitions defined for atom/mol type X
 
 This atom/mol type/template can't transition to any other "state"
+
+W: Max pair cutoff is larger than min pair cutoff + skin
+
+This might cause bad energy calculations (because of missing neighbors)
 
 TODO others...
 

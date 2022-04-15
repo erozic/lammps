@@ -70,9 +70,8 @@ FixChangeState::FixChangeState(LAMMPS *lmp, int narg, char **arg) :
   restart_global = 1;
   time_depend = 1;
 
-  //TODO can it be done without forcing reneighboring?
-  // ... post_integrate, post_force or end_step maybe ... ??
-  // ... using internal variables to check when to run...
+  // needs to force it to be called every nsteps
+  //  (because "the magic" is in post_neighbor)
   force_reneighbor = 1;
   next_reneighbor = update->ntimestep + 1;
 
@@ -147,9 +146,10 @@ FixChangeState::FixChangeState(LAMMPS *lmp, int narg, char **arg) :
       pen_mat_str += fmt::format(" |{:6.2f}|", trans_matrix[itype][0]);
       for (int jtype = 1; jtype < ntypes; jtype++)
         pen_mat_str += fmt::format("{:6.2f}|", trans_matrix[itype][jtype]);
-      pen_mat_str += "\n";
+      pen_mat_str += "\n\n";
     }
-    utils::logmesg(lmp, "Transition matrix from file:\n{}", pen_mat_str);
+    utils::logmesg(lmp,
+        "\n(FIX change/state) Transition matrix from file:\n{}", pen_mat_str);
   }
 
   // random number generator, same for all procs
@@ -189,7 +189,8 @@ void FixChangeState::options(int narg, char **arg)
 
   antisymflag = 0;
   regionflag = 0;
-  ke_flag = 0;
+  full_flag = 0;
+  ke_flag = 1;
   ntypes = 0;
   iregion = -1;
 
@@ -241,6 +242,9 @@ void FixChangeState::options(int narg, char **arg)
       idregion = utils::strdup(arg[iarg+1]);
       regionflag = 1;
       iarg += 2;
+    } else if (strcmp(arg[iarg],"full_energy") == 0) {
+      full_flag = 1;
+      iarg += 1;
     } else if (strcmp(arg[iarg],"ke") == 0) {
       if (iarg+2 > narg)
         error->all(FLERR,"Illegal fix change/state command (ke)");
@@ -331,13 +335,17 @@ int FixChangeState::type_index(int atom_type)
 /* ---------------------------------------------------------------------- */
 int FixChangeState::setmask()
 {
-  return PRE_EXCHANGE; //TODO POST_INTEGRATE, POST_FORCE or END_STEP ?
+  // used to be PRE_EXCHANGE
+  return POST_NEIGHBOR;
+  // other possibility is PRE_FORCE (doesn't force reneighboring)
+  //  - problem: comes after "force_clear" in Integrate
 }
 
 /* ---------------------------------------------------------------------- */
 void FixChangeState::init()
 {
   c_pe = modify->compute[modify->find_compute("thermo_pe")];
+  curr_global_pe = NAN; // to be sure to fail if not set
 
   if (ntypes < 2)
     error->all(FLERR, "Illegal fix change/state command: < 2 types");
@@ -349,73 +357,80 @@ void FixChangeState::init()
     //TODO
   }
 
-  if (ke_flag) {
-    memory->create(sqrt_mass_ratio, ntypes, ntypes, "change/state:sqrt_mass_ratio");
-    for (int itype = 0; itype < ntypes; itype++) {
-      for (int jtype = 0; jtype < ntypes; jtype++) {
-        double imass =  atom->mass[type_list[itype]];
-        double jmass =  atom->mass[type_list[jtype]];
-        sqrt_mass_ratio[itype][jtype] = sqrt(imass/jmass);
-      }
-    }
-  } else {
-    double atom_mass = atom->mass[type_list[0]];
-    for (int itype = 1; itype < ntypes; itype++) {
-      if (atom->mass[type_list[itype]] != atom_mass) {
-        if (comm->me == 0)
-          error->warning(FLERR,
-              "Not all types have same mass (and 'ke' conservation is off)");
-        break;
-      }
+  double atom_mass = atom->mass[type_list[0]];
+  for (int itype = 1; itype < ntypes; itype++) {
+    if (atom->mass[type_list[itype]] != atom_mass) {
+      atom_mass = -1;
+      break;
     }
   }
-
-  // check to see if itype and jtype cutoffs are the same (for reneighboring)
-  double **cutsq = force->pair->cutsq;
-  unequal_cutoffs = false;
-  for (int itype = 0; itype < ntypes; itype++){
-    for (int jtype = itype + 1; jtype < ntypes; jtype++){
-      for (int ktype = 1; ktype <= atom->ntypes; ktype++){
-        if (cutsq[type_list[itype]][ktype] != cutsq[type_list[jtype]][ktype]){
-          unequal_cutoffs = true;
-          break;
+  if (atom_mass > 0) {
+    if (ke_flag) {
+      utils::logmesg(lmp, "NOTE: Disabling ke conservation (all masses equal)\n");
+      ke_flag = 0;
+    }
+  } else if (atom_mass < 0) {
+    if (ke_flag) {
+      memory->create(sqrt_mass_ratio, ntypes, ntypes, "change/state:sqrt_mass_ratio");
+      for (int itype = 0; itype < ntypes; itype++) {
+        for (int jtype = 0; jtype < ntypes; jtype++) {
+          double imass =  atom->mass[type_list[itype]];
+          double jmass =  atom->mass[type_list[jtype]];
+          sqrt_mass_ratio[itype][jtype] = sqrt(imass/jmass);
         }
       }
-      if (unequal_cutoffs) break;
-    }
-    if (unequal_cutoffs) break;
+    } else if (comm->me == 0)
+      error->warning(FLERR,
+          "Not all types have same mass (and 'ke' conservation is off)");
   }
+
+  double **cutsq = force->pair->cutsq;
+  double min_cutsq = INFINITY, max_cutsq = 0;
+  for (int itype = 0; itype < ntypes; itype++) {
+    for (int ktype = 1; ktype <= atom->ntypes; ktype++) {
+      double cutoff = cutsq[type_list[itype]][ktype];
+      if (cutoff < min_cutsq) min_cutsq = cutoff;
+      if (cutoff > max_cutsq) max_cutsq = cutoff;
+    }
+  }
+  if (std::sqrt(max_cutsq) > std::sqrt(min_cutsq) + neighbor->skin)
+    error->warning(FLERR, "Max pair cutoff is larger than min pair cutoff + skin");
+
 }
 
 /* ----------------------------------------------------------------------
    This is where the magic happens...
 ------------------------------------------------------------------------- */
-void FixChangeState::pre_exchange()
+void FixChangeState::post_neighbor()
 {
   // just return if should not be called on this timestep
   if (next_reneighbor != update->ntimestep)
     return;
-  //TODO why use (re)neighboring as a trigger?
-
-  energy_stored = energy_full(true);
 
   update_atom_list();
+
+  if (full_flag) // initial PE calculation
+    curr_global_pe = total_energy_global();
 
   // attempt Ncycle atom swaps
   int nsuccess = 0;
   for (int i = 0; i < ncycles; i++) {
-    nsuccess += attempt_atom_type_change();
+    if (full_flag)
+      nsuccess += attempt_atom_type_change_global();
+    else
+      nsuccess += attempt_atom_type_change_local();
   }
+  if (full_flag)
+    comm->forward_comm(this);
 
   nattempts += ncycles;
   nsuccesses += nsuccess;
 
   next_reneighbor = update->ntimestep + nsteps;
-  //TODO why use (re)neighboring as a trigger?
 }
 
 /* ----------------------------------------------------------------------
-   Update the local list of atoms
+   Update the local list of atoms eligible for "state" changing
 ------------------------------------------------------------------------- */
 
 void FixChangeState::update_atom_list()
@@ -445,7 +460,7 @@ void FixChangeState::update_atom_list()
 }
 
 /* ----------------------------------------------------------------------
-   Select a random atom
+   Select a random atom (for "state" changing)
 
    Returns the local index of atom or -1 if atom not local.
 ------------------------------------------------------------------------- */
@@ -462,15 +477,69 @@ int FixChangeState::random_particle()
 }
 
 /* ----------------------------------------------------------------------
-   Attempt a Monte Carlo change of states...
+   Attempt a Monte Carlo change of states (with local energy calculation)
 
    NOTE: atom charges are assumed equal and so are not updated
 ------------------------------------------------------------------------- */
-int FixChangeState::attempt_atom_type_change()
+int FixChangeState::attempt_atom_type_change_local()
 {
   if (nparticles == 0) return 0;
 
-  double energy_before = energy_stored;
+  int oldtype, newtype;
+  int oldtypeindex, newtypeindex, trans_index;
+  double energy_before, energy_after, penalty;
+
+  int i = random_particle();
+  int success = 0;
+  if (i >= 0) {
+    newtype = oldtype = atom->type[i];
+    oldtypeindex = type_index(oldtype);
+    if (oldtypeindex < 0)
+      error->all(FLERR, "Undeclared atom type found in the fix group");
+    if (ntrans[oldtypeindex] == 0)
+      return 0; // no possible transitions for this particle...
+    trans_index = static_cast<int>(ntrans[oldtypeindex]*random_local->uniform());
+    penalty = transition[oldtypeindex][trans_index].penalty;
+    newtypeindex = transition[oldtypeindex][trans_index].stateindex;
+    newtype = type_list[newtypeindex];
+
+    energy_before = interaction_energy_local(i);
+    atom->type[i] = newtype;
+    energy_after = interaction_energy_local(i);
+
+    double boltzmann_factor = exp(beta*(energy_before - energy_after) - penalty);
+    if (random_local->uniform() < boltzmann_factor) {
+      success = 1;
+      if (ke_flag) {
+        atom->v[i][0] *= sqrt_mass_ratio[oldtypeindex][newtypeindex];
+        atom->v[i][1] *= sqrt_mass_ratio[oldtypeindex][newtypeindex];
+        atom->v[i][2] *= sqrt_mass_ratio[oldtypeindex][newtypeindex];
+      }
+    } else {
+      atom->type[i] = oldtype; // revert change
+    }
+  }
+
+  int success_all = 0;
+  MPI_Allreduce(&success, &success_all, 1, MPI_INT, MPI_MAX, world);
+
+  if (success_all)
+    comm->forward_comm(this); // communicate change in type
+    // needs to be done after every change because of energy calculations (ghosts)
+
+  return success_all;
+}
+
+/* ----------------------------------------------------------------------
+   Attempt a Monte Carlo change of states (with global energy calculation)
+
+   NOTE: atom charges are assumed equal and so are not updated
+------------------------------------------------------------------------- */
+int FixChangeState::attempt_atom_type_change_global()
+{
+  if (nparticles == 0) return 0;
+
+  double energy_before = curr_global_pe;
 
   int oldtype, newtype;
   int oldtypeindex, newtypeindex, trans_index;
@@ -490,64 +559,92 @@ int FixChangeState::attempt_atom_type_change()
     newtype = type_list[newtypeindex];
     atom->type[i] = newtype;
   }
+
+  comm->forward_comm(this); // communicate change in type
   //if (force->kspace) force->kspace->qsum_qsq();
   // only when charges change (maybe for mol? TODO)
-
-  double energy_after = energy_full(false);
+  double energy_after = total_energy_global();
 
   int success = 0;
   if (i >= 0) {
     double boltzmann_factor = exp(beta*(energy_before - energy_after) - penalty);
-    if (random_local->uniform() < boltzmann_factor)
+    if (random_local->uniform() < boltzmann_factor) {
       success = 1;
+      if (ke_flag) {
+        atom->v[i][0] *= sqrt_mass_ratio[oldtypeindex][newtypeindex];
+        atom->v[i][1] *= sqrt_mass_ratio[oldtypeindex][newtypeindex];
+        atom->v[i][2] *= sqrt_mass_ratio[oldtypeindex][newtypeindex];
+      }
+    } else {
+      atom->type[i] = oldtype; // revert change
+    }
   }
   int success_all = 0;
   MPI_Allreduce(&success, &success_all, 1, MPI_INT, MPI_MAX, world);
 
   if (success_all) {
-    energy_stored = energy_after;
-    if (ke_flag && i >= 0) {
-      atom->v[i][0] *= sqrt_mass_ratio[oldtypeindex][newtypeindex];
-      atom->v[i][1] *= sqrt_mass_ratio[oldtypeindex][newtypeindex];
-      atom->v[i][2] *= sqrt_mass_ratio[oldtypeindex][newtypeindex];
-    }
+    curr_global_pe = energy_after; // save new energy on all procs
   } else {
-    if (i >= 0) {
-      atom->type[i] = oldtype;
-    }
+    //comm->forward_comm(this);
+    // logically should be here (to communicate revertion to old type) but
+    // unnecessary because will be done before next global energy calculation
+
     //if (force->kspace) force->kspace->qsum_qsq();
     // only when charges change (maybe for mol? TODO)
   }
+
   return success_all;
 }
 
 /* ----------------------------------------------------------------------
-   Compute system potential energy
-
-   TODO try to make a local change version... (see GCMC)
+   Compute an atom's interaction energy with (local) atoms
 ------------------------------------------------------------------------- */
-double FixChangeState::energy_full(bool initial)
+
+double FixChangeState::interaction_energy_local(int i)
+{
+  double **x = atom->x;
+  int *type = atom->type;
+  double **cutsq = force->pair->cutsq;
+  Pair *pair = force->pair;
+
+  double *xi = x[i];
+  int itype = type[i];
+
+  double delx,dely,delz,rsq;
+
+  double force = 0.0;
+  double energy = 0.0;
+
+  int nall = atom->nlocal + atom->nghost;
+
+  for (int j = 0; j < nall; j++) {
+
+    if (i == j) continue;
+    //TODO exclude intramolecular ?
+
+    double *xj  = x[j];
+    int jtype = type[j];
+
+    delx = xi[0] - xj[0];
+    dely = xi[1] - xj[1];
+    delz = xi[2] - xj[2];
+    rsq = delx*delx + dely*dely + delz*delz;
+
+    if (rsq < cutsq[itype][jtype])
+      energy += pair->single(i, j, itype, jtype, rsq, 1.0, 1.0, force);
+  }
+
+  return energy;
+}
+
+/* ----------------------------------------------------------------------
+   Compute full system potential energy (over all atoms and processors)
+   NOTE: (very) costly...
+------------------------------------------------------------------------- */
+double FixChangeState::total_energy_global()
 {
   int eflag = 1;
   int vflag = 0;
-
-  // ensure all atoms/ghosts in their place, ready for E calc...
-  // (usually done in Verlet before reneighboring)
-  // if unequal_cutoffs exchange (and reneighboring?) has to be done...
-  // (call to comm->exchange() is a no-op but clears ghost atoms)
-  // TODO option to not reneighbor even if unequal cutoffs ?? (conditions...)
-  if (unequal_cutoffs || initial) {
-    if (domain->triclinic) domain->x2lamda(atom->nlocal);
-    domain->pbc();
-    comm->exchange();
-    comm->borders();
-    if (domain->triclinic) domain->lamda2x(atom->nlocal + atom->nghost);
-    if (modify->n_pre_neighbor) modify->pre_neighbor();
-    neighbor->build(1);
-    if (modify->n_post_neighbor) modify->post_neighbor(); //unnecessary?
-  } else {
-    comm->forward_comm(this);
-  }
 
   //force doesn't need to be cleared because it's accumulation
   //doesn't affect energy calculation
