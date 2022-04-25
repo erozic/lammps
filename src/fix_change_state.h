@@ -46,14 +46,16 @@ class FixChangeState : public Fix {
   int nsteps, ncycles, seed;
 
   typedef struct penalty_pair { // convenience structure...
-      int stateindex; //index of a "state", i.e. an atom type or mol template
+      int stateindex; // index of a "state", i.e. an atom type or mol template
       double penalty;
   } penalty_pair;
 
-  int ntypes;
+  enum StateMode {UNDEFINED, ATOMIC, MOLECULAR};
+
+  int nstates;
+  StateMode state_mode;
   int *type_list;
-  //int nmols;
-  //Molecule *mol_list;
+  int *mol_list; // list of indices in atom->molecules
   int antisymflag;  // 1 = antisymmetric transition penalty matrix
   double **trans_matrix;
   int *ntrans;
@@ -73,8 +75,6 @@ class FixChangeState : public Fix {
   int nattempts;
   int nsuccesses;
 
-  //bool unequal_cutoffs; TODO remove
-
   double beta;
   double curr_global_pe;
   double **sqrt_mass_ratio;
@@ -90,10 +90,14 @@ class FixChangeState : public Fix {
   void process_transitions_file(const char*, int);
   std::string readline(FILE*, char*);
   int type_index(int);
+  int mol_index(char*);
+  double state_mass(int);
   void update_atom_list();
   int random_particle();
   int attempt_atom_type_change_local();
+  int attempt_mol_state_change_local();
   int attempt_atom_type_change_global();
+  int attempt_mol_state_change_global();
   double interaction_energy_local(int);
   double total_energy_global();
 };
@@ -110,6 +114,14 @@ E: Illegal ... command
 Self-explanatory.  Check the input script syntax and compare to the
 documentation for the command.  You can use -echo screen as a
 command-line option when running LAMMPS to see the offending line.
+
+E: Using 'mols' keyword while system is not molecular (templated)
+
+Self-explanatory.
+
+E: Molecule template ID does not exist
+
+Self-explanatory.
 
 E: Must specify at least 2 types in fix change/state
 
@@ -147,15 +159,20 @@ E: Unexpected error reading the transition penalties file
 
 Self-explanatory.
 
-E: Illegal atom type in transition penalties file
+E: Illegal atom/mol state in transition penalties file
 
-An atom type not stated in the "types" keyword is used
+An atom type not stated in the "types" keyword, or
+a mol template not stated in the "mols" keyword is used
 
 E: Undeclared atom type found in the fix group
 
 An atom in the fix group has a type not specified by the "types" keyword
 
-W: Not all types have same mass (and 'ke' conservation is off)
+W: Molecule template has multiple molecules
+
+Self-explanatory.
+
+W: Not all atoms/mols have same mass (and 'ke' conservation is off)
 
 Self-explanatory.
 

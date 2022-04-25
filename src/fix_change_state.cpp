@@ -54,9 +54,9 @@ using namespace FixConst;
 
 FixChangeState::FixChangeState(LAMMPS *lmp, int narg, char **arg) :
   Fix(lmp, narg, arg),
-  type_list(nullptr), trans_matrix(nullptr), ntrans(nullptr),
-  transition(nullptr), idregion(nullptr),
-  sqrt_mass_ratio(nullptr), local_atom_list(nullptr),
+  type_list(nullptr), mol_list(nullptr), local_atom_list(nullptr),
+  trans_matrix(nullptr), ntrans(nullptr), transition(nullptr),
+  idregion(nullptr), sqrt_mass_ratio(nullptr),
   random_global(nullptr), random_local(nullptr), c_pe(nullptr)
 {
   if (narg < 13) error->all(FLERR,"Illegal fix change/state command");
@@ -74,10 +74,6 @@ FixChangeState::FixChangeState(LAMMPS *lmp, int narg, char **arg) :
   //  (because "the magic" is in post_neighbor)
   force_reneighbor = 1;
   next_reneighbor = update->ntimestep + 1;
-
-  // set comm size needed by this Fix
-  comm_forward = 1;
-  //TODO will change with mols...
 
   //TODO any other flags and variables from "fix.h" ?
 
@@ -100,41 +96,58 @@ FixChangeState::FixChangeState(LAMMPS *lmp, int narg, char **arg) :
 
   options(narg-7, &arg[7]);
 
+  // set comm size needed by this Fix
+  if (state_mode == MOLECULAR)
+    comm_forward = -1; //TODO ??
+  else if (state_mode == ATOMIC)
+    comm_forward = 1;
+  else
+    error->all(FLERR, "Illegal fix change/state command: "
+        "either 'types' or 'mols' is required!");
+
+  if (!trans_matrix)
+    error->all(FLERR, "Illegal fix change/state command: "
+            "trans_pens option is required!");
+
   if (antisymflag) {
-    for (int itype = 0; itype < ntypes; itype++) {
-      for (int jtype = itype+1; jtype < ntypes; jtype++) {
-        double pen_ij = trans_matrix[itype][jtype];
-        double pen_ji = trans_matrix[jtype][itype];
+    for (int istate = 0; istate < nstates; istate++) {
+      for (int jstate = istate+1; jstate < nstates; jstate++) {
+        double pen_ij = trans_matrix[istate][jstate];
+        double pen_ji = trans_matrix[jstate][istate];
         if (std::isfinite(pen_ij) && std::isinf(pen_ji))
-          trans_matrix[jtype][itype] = -pen_ij;
+          trans_matrix[jstate][istate] = -pen_ij;
         else if (std::isinf(pen_ij) && std::isfinite(pen_ji))
-          trans_matrix[itype][jtype] = -pen_ji;
+          trans_matrix[istate][jstate] = -pen_ji;
       }
     }
   }
 
-  memory->create(ntrans, ntypes, "change/state:ntrans");
+  memory->create(ntrans, nstates, "change/state:ntrans");
   transition = (penalty_pair **) memory->smalloc(
-      ntypes*sizeof(penalty_pair *), "change/state:transition");
-  for (int itype = 0; itype < ntypes; itype++) {
-    ntrans[itype] = 0;
-    for (int jtype = 0; jtype < ntypes; jtype++) {
-      if (std::isfinite(trans_matrix[itype][jtype]))
-        ntrans[itype]++;
+      nstates*sizeof(penalty_pair *), "change/state:transition");
+  for (int istate = 0; istate < nstates; istate++) {
+    ntrans[istate] = 0;
+    for (int jstate = 0; jstate < nstates; jstate++) {
+      if (std::isfinite(trans_matrix[istate][jstate]))
+        ntrans[istate]++;
     }
-    if (ntrans[itype] > 0) {
-      transition[itype] = (penalty_pair *) memory->smalloc(
-          ntrans[itype]*sizeof(penalty_pair), "change/state:transition-part");
+    if (ntrans[istate] > 0) {
+      transition[istate] = (penalty_pair *) memory->smalloc(
+          ntrans[istate]*sizeof(penalty_pair), "change/state:transition-part");
     } else {
-      error->warning(FLERR, "No transitions defined for atom type {}",
-          type_list[itype]);
+      if (state_mode == MOLECULAR && comm->me == 0)
+        error->warning(FLERR, "No transitions defined for molecule template {}",
+            atom->molecules[mol_list[istate]]->id);
+      else if (comm->me == 0)
+        error->warning(FLERR, "No transitions defined for atom type {}",
+            type_list[istate]);
       continue;
     }
     int jcount = 0;
-    for (int jtype = 0; jtype < ntypes; jtype++) {
-      if (std::isfinite(trans_matrix[itype][jtype])) {
-        transition[itype][jcount].stateindex = jtype;
-        transition[itype][jcount].penalty = trans_matrix[itype][jtype];
+    for (int jstate = 0; jstate < nstates; jstate++) {
+      if (std::isfinite(trans_matrix[istate][jstate])) {
+        transition[istate][jcount].stateindex = jstate;
+        transition[istate][jcount].penalty = trans_matrix[istate][jstate];
         jcount++;
       }
     }
@@ -142,10 +155,10 @@ FixChangeState::FixChangeState(LAMMPS *lmp, int narg, char **arg) :
 
   if (comm->me == 0) {
     std::string pen_mat_str = "";
-    for (int itype = 0; itype < ntypes; itype++) {
-      pen_mat_str += fmt::format(" |{:6.2f}|", trans_matrix[itype][0]);
-      for (int jtype = 1; jtype < ntypes; jtype++)
-        pen_mat_str += fmt::format("{:6.2f}|", trans_matrix[itype][jtype]);
+    for (int istate = 0; istate < nstates; istate++) {
+      pen_mat_str += fmt::format(" |{:6.2f}|", trans_matrix[istate][0]);
+      for (int jstate = 1; jstate < nstates; jstate++)
+        pen_mat_str += fmt::format("{:6.2f}|", trans_matrix[istate][jstate]);
       pen_mat_str += "\n\n";
     }
     utils::logmesg(lmp,
@@ -168,10 +181,11 @@ FixChangeState::FixChangeState(LAMMPS *lmp, int narg, char **arg) :
 FixChangeState::~FixChangeState()
 {
   memory->destroy(type_list);
+  memory->destroy(mol_list);
   memory->destroy(trans_matrix);
   memory->destroy(ntrans);
-  for (int itype = 0; itype < ntypes; itype++)
-    memory->sfree(transition[itype]);
+  for (int istate = 0; istate < nstates; istate++)
+    memory->sfree(transition[istate]);
   memory->sfree(transition);
   memory->destroy(local_atom_list);
   memory->destroy(sqrt_mass_ratio);
@@ -187,46 +201,75 @@ void FixChangeState::options(int narg, char **arg)
 {
   if (narg < 6) error->all(FLERR, "Illegal fix change/state command");
 
+  state_mode = UNDEFINED;
+  nstates = 0;
   antisymflag = 0;
   regionflag = 0;
   full_flag = 0;
-  ke_flag = 1;
-  ntypes = 0;
+  ke_flag = 0;
   iregion = -1;
 
   int iarg = 0;
   while (iarg < narg) {
     if (strcmp(arg[iarg],"types") == 0) {
       if (iarg+3 > narg) error->all(FLERR, "Illegal fix change/state command");
+      if (state_mode != UNDEFINED)
+        error->all(FLERR, "Illegal fix change/state command: types AND mols");
+      state_mode = ATOMIC;
       iarg++;
-      while (iarg+ntypes < narg) {
-        if (isalpha(arg[iarg+ntypes][0])) break;
-        ntypes++;
+      while (iarg+nstates < narg) {
+        if (isalpha(arg[iarg+nstates][0])) break;
+        nstates++;
       }
-      if (ntypes < 2)
+      if (nstates < 2)
         error->all(FLERR, "Illegal fix change/state command: < 2 types");
-      if (ntypes > atom->ntypes)
-        error->all(FLERR, "Illegal fix change/state command: too many types");
-      memory->create(type_list, ntypes, "change/state:type_list");
-      // makes sense to create and initialise the trans_matrix here too...
-      memory->create(trans_matrix, ntypes, ntypes, "change/state:trans_matrix");
-      for (int itype = 0; itype < ntypes; itype++) {
-        type_list[itype] = utils::inumeric(FLERR, arg[iarg+itype], false, lmp);
-        if (type_list[itype] <= 0 || type_list[itype] > atom->ntypes)
+      memory->create(type_list, nstates, "change/state:type_list");
+      for (int istate = 0; istate < nstates; istate++) {
+        type_list[istate] = utils::inumeric(FLERR, arg[iarg+istate], false, lmp);
+        if (type_list[istate] <= 0 || type_list[istate] > atom->ntypes)
           error->all(FLERR, "Illegal fix change/state command: type out of range");
-        for (int jtype = 0; jtype < itype; jtype++) {
-          if (type_list[jtype] == type_list[itype])
+        for (int jstate = 0; jstate < istate; jstate++) {
+          if (type_list[jstate] == type_list[istate])
             error->all(FLERR, "Illegal fix change/state command: repeated type");
-          trans_matrix[itype][jtype] = trans_matrix[jtype][itype] = INFINITY;
         }
-        trans_matrix[itype][itype] = INFINITY;
       }
-      iarg += ntypes;
+      iarg += nstates;
+    } else if (strcmp(arg[iarg],"mols") == 0) {
+      if (iarg+3 > narg) error->all(FLERR, "Illegal fix change/state command");
+      if (atom->molecular != TEMPLATE)
+        error->all(FLERR, "Using 'mols' keyword while system is not molecular (templated)");
+      if (state_mode != UNDEFINED)
+        error->all(FLERR, "Illegal fix change/state command: types AND mols");
+      state_mode = MOLECULAR;
+      iarg++;
+      while (iarg+nstates < narg) {
+        if (atom->find_molecule(arg[iarg+nstates]) == -1) break;
+        nstates++;
+      }
+      if (nstates < 2)
+        error->all(FLERR, "Illegal fix change/state command: < 2 mols");
+      memory->create(mol_list, nstates, "change/state:mol_list");
+      for (int istate = 0; istate < nstates; istate++) {
+        mol_list[istate] = atom->find_molecule(arg[iarg+istate]);
+        if (mol_list[istate] == -1)
+          error->all(FLERR, "Illegal fix change/state command: mol template undefined");
+        if (atom->molecules[mol_list[istate]]->nset > 1 && comm->me == 0)
+          error->warning(FLERR, "Molecule template {} has multiple molecules",
+              atom->molecules[mol_list[istate]]->id);
+        for (int jstate = 0; jstate < istate; jstate++)
+          if (mol_list[jstate] == mol_list[istate])
+            error->all(FLERR, "Illegal fix change/state command: repeated mol template");
+      }
+      iarg += nstates;
     } else if (strcmp(arg[iarg],"trans_pens") == 0) {
       if (iarg+2 > narg)
         error->all(FLERR, "Illegal fix change/state command (trans_pens)");
+      memory->create(trans_matrix, nstates, nstates, "change/state:trans_matrix");
+      for (int istate = 0; istate < nstates; istate++)
+        for (int jstate = 0; jstate < nstates; jstate++)
+          trans_matrix[istate][istate] = INFINITY;
       process_transitions_file(arg[iarg+1], 0);
-      MPI_Bcast(*trans_matrix, ntypes*ntypes, MPI_DOUBLE, 0, world);
+      MPI_Bcast(*trans_matrix, nstates*nstates, MPI_DOUBLE, 0, world);
       iarg += 2;
       // optional additional argument to "trans_pens" keyword
       if (iarg < narg && strcmp(arg[iarg],"antisym") == 0) {
@@ -271,6 +314,7 @@ void FixChangeState::process_transitions_file(const char *filename, int rank)
   char rawline[MAXLINE];
   std::string line;
   int ntransitions = 0;
+  int stateindex1, stateindex2;
   // skip 1st line of file
   int linenum = 1;
   line = readline(fp, rawline);
@@ -285,12 +329,17 @@ void FixChangeState::process_transitions_file(const char *filename, int rank)
       ValueTokenizer values(line);
       if (values.count() != 3)
         error->one(FLERR, "Invalid format of the transition penalties file");
-      int typeindex1 = type_index(values.next_int());
-      int typeindex2 = type_index(values.next_int());
+      if (state_mode == MOLECULAR) {
+        stateindex1 = mol_index(values.next_string());
+        stateindex2 = mol_index(values.next_string());
+      } else {
+        stateindex1 = type_index(values.next_int());
+        stateindex2 = type_index(values.next_int());
+      }
       double penalty = values.next_double();
-      if (typeindex1 < 0 || typeindex2 < 0)
-        error->one(FLERR, "Illegal atom type in transition penalties file");
-      trans_matrix[typeindex1][typeindex2] = penalty;
+      if (stateindex1 < 0 || stateindex2 < 0)
+        error->one(FLERR, "Illegal atom/mol state in transition penalties file");
+      trans_matrix[stateindex1][stateindex2] = penalty;
       ntransitions++;
     } catch (TokenizerException &e) {
       error->one(FLERR, "Invalid format of the transition penalties file: {}",
@@ -318,18 +367,33 @@ std::string FixChangeState::readline(FILE *fp, char *rawline)
 }
 
 /* ----------------------------------------------------------------------
-   Returns the index of "atom type" in the type_list (or -1 if not there)
+   Returns the index of "atom_type" in the type_list (or -1 if not there)
 ------------------------------------------------------------------------- */
 int FixChangeState::type_index(int atom_type)
 {
-  int typeindex = -1;
-  for (int itype = 0; itype < ntypes; itype++) {
-    if (type_list[itype] == atom_type) {
-      typeindex = itype;
+  int stateindex = -1;
+  for (int istate = 0; istate < nstates; istate++) {
+    if (type_list[istate] == atom_type) {
+      stateindex = istate;
       break;
     }
   }
-  return typeindex;
+  return stateindex;
+}
+
+/* ----------------------------------------------------------------------
+   Returns the index of "mol_template_id" in the mol_list (or -1 if not there)
+------------------------------------------------------------------------- */
+int FixChangeState::mol_index(char* mol_template_id)
+{
+  int stateindex = -1;
+  for (int istate = 0; istate < nstates; istate++) {
+    if (strcmp(mol_list[istate].id, mol_template_id) == 0) {
+      stateindex = istate;
+      break;
+    }
+  }
+  return stateindex;
 }
 
 /* ---------------------------------------------------------------------- */
@@ -347,8 +411,8 @@ void FixChangeState::init()
   c_pe = modify->compute[modify->find_compute("thermo_pe")];
   curr_global_pe = NAN; // to be sure to fail if not set
 
-  if (ntypes < 2)
-    error->all(FLERR, "Illegal fix change/state command: < 2 types");
+  if (nstates < 2)
+    error->all(FLERR, "Illegal fix change/state command: < 2 states defined");
 
   // check all mol templates have same charge
   // (irrelevant for atomic simulations - can't change total charge of a single
@@ -357,45 +421,74 @@ void FixChangeState::init()
     //TODO
   }
 
-  double atom_mass = atom->mass[type_list[0]];
-  for (int itype = 1; itype < ntypes; itype++) {
-    if (atom->mass[type_list[itype]] != atom_mass) {
-      atom_mass = -1;
+  double check_mass = state_mass(0);
+  for (int istate = 1; istate < nstates; istate++) {
+    if (state_mass(istate) != check_mass) {
+      check_mass = -1;
       break;
     }
   }
-  if (atom_mass > 0) {
+  if (check_mass > 0) {
     if (ke_flag) {
       utils::logmesg(lmp, "NOTE: Disabling ke conservation (all masses equal)\n");
       ke_flag = 0;
     }
-  } else if (atom_mass < 0) {
+  } else if (check_mass < 0) {
     if (ke_flag) {
-      memory->create(sqrt_mass_ratio, ntypes, ntypes, "change/state:sqrt_mass_ratio");
-      for (int itype = 0; itype < ntypes; itype++) {
-        for (int jtype = 0; jtype < ntypes; jtype++) {
-          double imass =  atom->mass[type_list[itype]];
-          double jmass =  atom->mass[type_list[jtype]];
-          sqrt_mass_ratio[itype][jtype] = sqrt(imass/jmass);
+      memory->create(sqrt_mass_ratio, nstates, nstates, "change/state:sqrt_mass_ratio");
+      for (int istate = 0; istate < nstates; istate++) {
+        for (int jstate = 0; jstate < nstates; jstate++) {
+          double imass = state_mass(istate);
+          double jmass = state_mass(jstate);
+          sqrt_mass_ratio[istate][jstate] = sqrt(imass/jmass);
         }
       }
     } else if (comm->me == 0)
       error->warning(FLERR,
-          "Not all types have same mass (and 'ke' conservation is off)");
+          "Not all atoms/mols have same mass (and 'ke' conservation is off)");
   }
 
   double **cutsq = force->pair->cutsq;
   double min_cutsq = INFINITY, max_cutsq = 0;
-  for (int itype = 0; itype < ntypes; itype++) {
-    for (int ktype = 1; ktype <= atom->ntypes; ktype++) {
-      double cutoff = cutsq[type_list[itype]][ktype];
-      if (cutoff < min_cutsq) min_cutsq = cutoff;
-      if (cutoff > max_cutsq) max_cutsq = cutoff;
+  int itype;
+  for (int istate = 0; istate < nstates; istate++) {
+    if (state_mode == MOLECULAR) {
+      Molecule *mol_state = atom->molecules[mol_list[istate]];
+      for (int iatom = 0; iatom < mol_state->natoms; iatom++) {
+        itype = mol_state->type[iatom];
+        for (int jtype = 1; jtype <= atom->ntypes; jtype++) {
+          double cutoff = cutsq[itype][jtype];
+          if (cutoff < min_cutsq) min_cutsq = cutoff;
+          if (cutoff > max_cutsq) max_cutsq = cutoff;
+        }
+      }
+    } else {
+      itype = type_list[istate];
+      for (int jtype = 1; jtype <= atom->ntypes; jtype++) {
+        double cutoff = cutsq[itype][jtype];
+        if (cutoff < min_cutsq) min_cutsq = cutoff;
+        if (cutoff > max_cutsq) max_cutsq = cutoff;
+      }
     }
   }
   if (std::sqrt(max_cutsq) > std::sqrt(min_cutsq) + neighbor->skin)
-    error->warning(FLERR, "Max pair cutoff is larger than min pair cutoff + skin");
+    if (comm->me == 0) error->warning(FLERR,
+        "Max pair cutoff is larger than min pair cutoff + skin");
+}
 
+/* ----------------------------------------------------------------------
+   Returns mass of state indicated by index (atom or mol)
+------------------------------------------------------------------------- */
+double FixChangeState::state_mass(int stateindex)
+{
+  if (state_mode == MOLECULAR) {
+    Molecule *mol_state = atom->molecules[mol_list[stateindex]];
+    if (!mol_state->massflag)
+      mol_state->compute_mass();
+    return mol_state->masstotal;
+  } else {
+    return atom->mass[type_list[stateindex]];
+  }
 }
 
 /* ----------------------------------------------------------------------
@@ -415,10 +508,17 @@ void FixChangeState::post_neighbor()
   // attempt Ncycle atom swaps
   int nsuccess = 0;
   for (int i = 0; i < ncycles; i++) {
-    if (full_flag)
-      nsuccess += attempt_atom_type_change_global();
-    else
-      nsuccess += attempt_atom_type_change_local();
+    if (full_flag) {
+      if (state_mode == MOLECULAR)
+        nsuccess += attempt_mol_state_change_global();
+      else
+        nsuccess += attempt_atom_type_change_global();
+    } else {
+      if (state_mode == MOLECULAR)
+        nsuccess += attempt_mol_state_change_local();
+      else
+        nsuccess += attempt_atom_type_change_local();
+    }
   }
   if (full_flag)
     comm->forward_comm(this);
@@ -477,7 +577,8 @@ int FixChangeState::random_particle()
 }
 
 /* ----------------------------------------------------------------------
-   Attempt a Monte Carlo change of states (with local energy calculation)
+   Attempt a Monte Carlo change of atom state/type,
+   with local energy calculation
 
    NOTE: atom charges are assumed equal and so are not updated
 ------------------------------------------------------------------------- */
@@ -531,7 +632,17 @@ int FixChangeState::attempt_atom_type_change_local()
 }
 
 /* ----------------------------------------------------------------------
-   Attempt a Monte Carlo change of states (with global energy calculation)
+   Attempt a Monte Carlo change of molecule state (mol template),
+   with local energy calculation
+------------------------------------------------------------------------- */
+int FixChangeState::attempt_mol_state_change_local()
+{
+  //TODO
+}
+
+/* ----------------------------------------------------------------------
+   Attempt a Monte Carlo change of atom state/type,
+   with global energy calculation
 
    NOTE: atom charges are assumed equal and so are not updated
 ------------------------------------------------------------------------- */
@@ -562,7 +673,7 @@ int FixChangeState::attempt_atom_type_change_global()
 
   comm->forward_comm(this); // communicate change in type
   //if (force->kspace) force->kspace->qsum_qsq();
-  // only when charges change (maybe for mol? TODO)
+  // only when charges change (maybe for mol? TODO remove)
   double energy_after = total_energy_global();
 
   int success = 0;
@@ -590,10 +701,19 @@ int FixChangeState::attempt_atom_type_change_global()
     // unnecessary because will be done before next global energy calculation
 
     //if (force->kspace) force->kspace->qsum_qsq();
-    // only when charges change (maybe for mol? TODO)
+    // only when charges change (maybe for mol? TODO remove)
   }
 
   return success_all;
+}
+
+/* ----------------------------------------------------------------------
+   Attempt a Monte Carlo change of molecule state (mol template),
+   with global energy calculation
+------------------------------------------------------------------------- */
+int FixChangeState::attempt_mol_state_change_global()
+{
+  //TODO
 }
 
 /* ----------------------------------------------------------------------
@@ -675,7 +795,6 @@ double FixChangeState::total_energy_global()
 }
 
 /* ---------------------------------------------------------------------- */
-//TODO for now only type, when mol a lot of other things possibly (charge etc.)
 int FixChangeState::pack_forward_comm(int n, int *list, double *buf, int /*pbc_flag*/, int * /*pbc*/)
 {
   int i, j, m;
@@ -685,13 +804,15 @@ int FixChangeState::pack_forward_comm(int n, int *list, double *buf, int /*pbc_f
   for (i = 0; i < n; i++) {
     j = list[i];
     buf[m++] = type[j];
+    if (state_mode == MOLECULAR) {
+      //TODO ...
+    }
   }
 
   return m;
 }
 
 /* ---------------------------------------------------------------------- */
-//TODO for now only type, when mol a lot of other things possibly (charge etc.)
 void FixChangeState::unpack_forward_comm(int n, int first, double *buf)
 {
   int i, m, last;
@@ -699,8 +820,12 @@ void FixChangeState::unpack_forward_comm(int n, int first, double *buf)
 
   m = 0;
   last = first + n;
-  for (i = first; i < last; i++)
+  for (i = first; i < last; i++) {
     type[i] = static_cast<int>(buf[m++]);
+    if (state_mode == MOLECULAR) {
+      //TODO ...
+    }
+  }
 }
 
 /* ----------------------------------------------------------------------
