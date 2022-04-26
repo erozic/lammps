@@ -77,51 +77,130 @@ FixChangeState::FixChangeState(LAMMPS *lmp, int narg, char **arg) :
 
   //TODO any other flags and variables from "fix.h" ?
 
-  // required args
-  nsteps = utils::inumeric(FLERR, arg[3], false, lmp);
-  ncycles = utils::inumeric(FLERR, arg[4], false, lmp);
-  seed = utils::inumeric(FLERR, arg[5], false, lmp);
-  double temperature = utils::numeric(FLERR, arg[6], false, lmp);
+  int iarg = 3;
 
+  // process args...
+
+  nsteps = utils::inumeric(FLERR, arg[iarg++], false, lmp);
   if (nsteps <= 0)
     error->all(FLERR, "Illegal fix change/state command (N <= 0)");
+
+  ncycles = utils::inumeric(FLERR, arg[iarg++], false, lmp);
   if (ncycles <= 0)
     error->all(FLERR, "Illegal fix change/state command (M <= 0)");
+
+  seed = utils::inumeric(FLERR, arg[iarg++], false, lmp);
   if (seed <= 0)
     error->all(FLERR, "Illegal fix change/state command (seed <= 0)");
+
+  double temperature = utils::numeric(FLERR, arg[iarg++], false, lmp);
   if (temperature <= 0.0)
     error->all(FLERR, "Illegal fix change/state command (T <= 0.0)");
 
   beta = 1.0/(force->boltz*temperature);
+  nstates = 0;
+  antisymflag = 0;
 
-  options(narg-7, &arg[7]);
+  if (strcmp(arg[iarg], "types") == 0) {
+    iarg++;
+    if (iarg + 2 > narg) error->all(FLERR, "Illegal fix change/state command");
+    state_mode = ATOMIC;
+    while (iarg + nstates < narg) {
+      if (isalpha(arg[iarg+nstates][0])) break;
+      nstates++;
+    }
+    if (nstates < 2)
+      error->all(FLERR, "Illegal fix change/state command: < 2 types");
+    memory->create(type_list, nstates, "change/state:type_list");
+    for (int istate = 0; istate < nstates; istate++) {
+      type_list[istate] = utils::inumeric(FLERR, arg[iarg + istate], false, lmp);
+      if (type_list[istate] <= 0 || type_list[istate] > atom->ntypes)
+        error->all(FLERR, "Illegal fix change/state command: type out of range");
+      for (int jstate = 0; jstate < istate; jstate++) {
+        if (type_list[jstate] == type_list[istate])
+          error->all(FLERR, "Illegal fix change/state command: repeated atom type");
+      }
+    }
+    iarg += nstates;
+  } else if (strcmp(arg[iarg], "mols") == 0) {
+    iarg++;
+    if (iarg + 2 > narg) error->all(FLERR, "Illegal fix change/state command");
+    if (atom->molecular != TEMPLATE)
+      error->all(FLERR, "Using 'mols' keyword while system is not molecular (templated)");
+    state_mode = MOLECULAR;
+    while (iarg + nstates < narg) {
+      if (atom->find_molecule(arg[iarg+nstates]) == -1) break;
+      nstates++;
+    }
+    if (nstates < 2)
+      error->all(FLERR, "Illegal fix change/state command: < 2 mols");
+    memory->create(mol_list, nstates, "change/state:mol_list");
+    for (int istate = 0; istate < nstates; istate++) {
+      mol_list[istate] = atom->find_molecule(arg[iarg + istate]);
+      if (mol_list[istate] == -1)
+        error->all(FLERR, "Illegal fix change/state command: mol template undefined");
+      if (atom->molecules[mol_list[istate]]->nset > 1 && comm->me == 0)
+        error->warning(FLERR, "Molecule template {} has multiple molecules",
+            atom->molecules[mol_list[istate]]->id);
+      for (int jstate = 0; jstate < istate; jstate++)
+        if (mol_list[jstate] == mol_list[istate])
+          error->all(FLERR, "Illegal fix change/state command: repeated mol template");
+    }
+    iarg += nstates;
+  } else
+    error->all(FLERR, "Illegal fix change/state command: "
+        "either 'types' or 'mols' is required as first keyword!");
 
   // set comm size needed by this Fix
   if (state_mode == MOLECULAR)
-    comm_forward = -1; //TODO ??
+    comm_forward = -1; //TODO charges, bonds, angles, ... ??
   else if (state_mode == ATOMIC)
     comm_forward = 1;
-  else
-    error->all(FLERR, "Illegal fix change/state command: "
-        "either 'types' or 'mols' is required!");
 
-  if (!trans_matrix)
-    error->all(FLERR, "Illegal fix change/state command: "
-            "trans_pens option is required!");
-
-  if (antisymflag) {
-    for (int istate = 0; istate < nstates; istate++) {
-      for (int jstate = istate+1; jstate < nstates; jstate++) {
-        double pen_ij = trans_matrix[istate][jstate];
-        double pen_ji = trans_matrix[jstate][istate];
-        if (std::isfinite(pen_ij) && std::isinf(pen_ji))
-          trans_matrix[jstate][istate] = -pen_ij;
-        else if (std::isinf(pen_ij) && std::isfinite(pen_ji))
-          trans_matrix[istate][jstate] = -pen_ji;
+  if (strcmp(arg[iarg], "trans_pens") == 0) {
+    iarg++;
+    if (iarg + 1 > narg)
+      error->all(FLERR, "Illegal fix change/state command (trans_pens)");
+    memory->create(trans_matrix, nstates, nstates, "change/state:trans_matrix");
+    for (int istate = 0; istate < nstates; istate++)
+      for (int jstate = 0; jstate < nstates; jstate++)
+        trans_matrix[istate][istate] = INFINITY;
+    process_transitions_file(arg[iarg], 0);
+    iarg++;
+    MPI_Bcast(*trans_matrix, nstates*nstates, MPI_DOUBLE, 0, world);
+    // optional additional argument to "trans_pens" keyword
+    if (iarg < narg && strcmp(arg[iarg], "antisym") == 0) {
+      iarg++;
+      antisymflag = 1;
+      for (int istate = 0; istate < nstates; istate++) {
+        for (int jstate = istate+1; jstate < nstates; jstate++) {
+          double pen_ij = trans_matrix[istate][jstate];
+          double pen_ji = trans_matrix[jstate][istate];
+          if (std::isfinite(pen_ij) && std::isinf(pen_ji))
+            trans_matrix[jstate][istate] = -pen_ij;
+          else if (std::isinf(pen_ij) && std::isfinite(pen_ji))
+            trans_matrix[istate][jstate] = -pen_ji;
+        }
       }
     }
+  } else
+    error->all(FLERR, "Illegal fix change/state command: "
+        "'trans_pens' option is required (after types/mols)!");
+
+  // print transition matrix to log file
+  if (comm->me == 0) {
+    std::string pen_mat_str = "";
+    for (int istate = 0; istate < nstates; istate++) {
+      pen_mat_str += fmt::format(" |{:6.2f}|", trans_matrix[istate][0]);
+      for (int jstate = 1; jstate < nstates; jstate++)
+        pen_mat_str += fmt::format("{:6.2f}|", trans_matrix[istate][jstate]);
+      pen_mat_str += "\n\n";
+    }
+    utils::logmesg(lmp,
+        "\n(FIX change/state) Transition matrix from file:\n{}", pen_mat_str);
   }
 
+  // create the transition lists for each state (from the matrix)
   memory->create(ntrans, nstates, "change/state:ntrans");
   transition = (penalty_pair **) memory->smalloc(
       nstates*sizeof(penalty_pair *), "change/state:transition");
@@ -153,17 +232,8 @@ FixChangeState::FixChangeState(LAMMPS *lmp, int narg, char **arg) :
     }
   }
 
-  if (comm->me == 0) {
-    std::string pen_mat_str = "";
-    for (int istate = 0; istate < nstates; istate++) {
-      pen_mat_str += fmt::format(" |{:6.2f}|", trans_matrix[istate][0]);
-      for (int jstate = 1; jstate < nstates; jstate++)
-        pen_mat_str += fmt::format("{:6.2f}|", trans_matrix[istate][jstate]);
-      pen_mat_str += "\n\n";
-    }
-    utils::logmesg(lmp,
-        "\n(FIX change/state) Transition matrix from file:\n{}", pen_mat_str);
-  }
+  // process other, non-positional keyword options...
+  options(narg-iarg, &arg[iarg]);
 
   // random number generator, same for all procs
   random_global = new RanPark(lmp,seed);
@@ -199,11 +269,6 @@ FixChangeState::~FixChangeState()
 ------------------------------------------------------------------------- */
 void FixChangeState::options(int narg, char **arg)
 {
-  if (narg < 6) error->all(FLERR, "Illegal fix change/state command");
-
-  state_mode = UNDEFINED;
-  nstates = 0;
-  antisymflag = 0;
   regionflag = 0;
   full_flag = 0;
   ke_flag = 0;
@@ -211,88 +276,25 @@ void FixChangeState::options(int narg, char **arg)
 
   int iarg = 0;
   while (iarg < narg) {
-    if (strcmp(arg[iarg],"types") == 0) {
-      if (iarg+3 > narg) error->all(FLERR, "Illegal fix change/state command");
-      if (state_mode != UNDEFINED)
-        error->all(FLERR, "Illegal fix change/state command: types AND mols");
-      state_mode = ATOMIC;
+    if (strcmp(arg[iarg], "region") == 0) {
       iarg++;
-      while (iarg+nstates < narg) {
-        if (isalpha(arg[iarg+nstates][0])) break;
-        nstates++;
-      }
-      if (nstates < 2)
-        error->all(FLERR, "Illegal fix change/state command: < 2 types");
-      memory->create(type_list, nstates, "change/state:type_list");
-      for (int istate = 0; istate < nstates; istate++) {
-        type_list[istate] = utils::inumeric(FLERR, arg[iarg+istate], false, lmp);
-        if (type_list[istate] <= 0 || type_list[istate] > atom->ntypes)
-          error->all(FLERR, "Illegal fix change/state command: type out of range");
-        for (int jstate = 0; jstate < istate; jstate++) {
-          if (type_list[jstate] == type_list[istate])
-            error->all(FLERR, "Illegal fix change/state command: repeated type");
-        }
-      }
-      iarg += nstates;
-    } else if (strcmp(arg[iarg],"mols") == 0) {
-      if (iarg+3 > narg) error->all(FLERR, "Illegal fix change/state command");
-      if (atom->molecular != TEMPLATE)
-        error->all(FLERR, "Using 'mols' keyword while system is not molecular (templated)");
-      if (state_mode != UNDEFINED)
-        error->all(FLERR, "Illegal fix change/state command: types AND mols");
-      state_mode = MOLECULAR;
-      iarg++;
-      while (iarg+nstates < narg) {
-        if (atom->find_molecule(arg[iarg+nstates]) == -1) break;
-        nstates++;
-      }
-      if (nstates < 2)
-        error->all(FLERR, "Illegal fix change/state command: < 2 mols");
-      memory->create(mol_list, nstates, "change/state:mol_list");
-      for (int istate = 0; istate < nstates; istate++) {
-        mol_list[istate] = atom->find_molecule(arg[iarg+istate]);
-        if (mol_list[istate] == -1)
-          error->all(FLERR, "Illegal fix change/state command: mol template undefined");
-        if (atom->molecules[mol_list[istate]]->nset > 1 && comm->me == 0)
-          error->warning(FLERR, "Molecule template {} has multiple molecules",
-              atom->molecules[mol_list[istate]]->id);
-        for (int jstate = 0; jstate < istate; jstate++)
-          if (mol_list[jstate] == mol_list[istate])
-            error->all(FLERR, "Illegal fix change/state command: repeated mol template");
-      }
-      iarg += nstates;
-    } else if (strcmp(arg[iarg],"trans_pens") == 0) {
-      if (iarg+2 > narg)
-        error->all(FLERR, "Illegal fix change/state command (trans_pens)");
-      memory->create(trans_matrix, nstates, nstates, "change/state:trans_matrix");
-      for (int istate = 0; istate < nstates; istate++)
-        for (int jstate = 0; jstate < nstates; jstate++)
-          trans_matrix[istate][istate] = INFINITY;
-      process_transitions_file(arg[iarg+1], 0);
-      MPI_Bcast(*trans_matrix, nstates*nstates, MPI_DOUBLE, 0, world);
-      iarg += 2;
-      // optional additional argument to "trans_pens" keyword
-      if (iarg < narg && strcmp(arg[iarg],"antisym") == 0) {
-        antisymflag = 1;
-        iarg++;
-      }
-    } else if (strcmp(arg[iarg],"region") == 0) {
-      if (iarg+2 > narg)
+      if (iarg + 1 > narg)
         error->all(FLERR, "Illegal fix change/state command (region)");
-      iregion = domain->find_region(arg[iarg+1]);
+      iregion = domain->find_region(arg[iarg]);
       if (iregion == -1)
         error->all(FLERR, "Region ID for fix change/state does not exist");
-      idregion = utils::strdup(arg[iarg+1]);
+      idregion = utils::strdup(arg[iarg]);
       regionflag = 1;
-      iarg += 2;
-    } else if (strcmp(arg[iarg],"full_energy") == 0) {
+      iarg++;
+    } else if (strcmp(arg[iarg], "full_energy") == 0) {
+      iarg++;
       full_flag = 1;
-      iarg += 1;
-    } else if (strcmp(arg[iarg],"ke") == 0) {
-      if (iarg+2 > narg)
+    } else if (strcmp(arg[iarg], "ke") == 0) {
+      iarg++;
+      if (iarg + 1 > narg)
         error->all(FLERR,"Illegal fix change/state command (ke)");
-      ke_flag = utils::logical(FLERR, arg[iarg+1], false, lmp);
-      iarg += 2;
+      ke_flag = utils::logical(FLERR, arg[iarg], false, lmp);
+      iarg++;
     } else
       error->all(FLERR, "Illegal fix change/state command: unknown option");
   }
@@ -414,11 +416,26 @@ void FixChangeState::init()
   if (nstates < 2)
     error->all(FLERR, "Illegal fix change/state command: < 2 states defined");
 
-  // check all mol templates have same charge
-  // (irrelevant for atomic simulations - can't change total charge of a single
-  // atom, but "charge redistribution" makes sense for molecules)
   if (atom->q_flag) {
-    //TODO
+    if (state_mode == ATOMIC && comm->me == 0) {
+      error->warning(FLERR, "State change won't change charges of atoms, only types.");
+    } else if (state_mode == MOLECULAR) {
+      // All mol templates have to have same total charge (redistribution OK, loss/gain NOT OK)
+      Molecule *mol_state = atom->molecules[mol_list[0]];
+      double mol_charge = 0;
+      for (int iatom = 0; iatom < mol_state->natoms; iatom++)
+        mol_charge += mol_state->q[iatom];
+
+      for (int istate = 1; istate < nstates; istate++) {
+        mol_state = atom->molecules[mol_list[istate]];
+        double temp_charge = 0;
+        for (int iatom = 0; iatom < mol_state->natoms; iatom++)
+          mol_charge += mol_state->q[iatom];
+        if (temp_charge != mol_charge) {
+          error->all(FLERR, "All molecule templates have to have same total charge!");
+        }
+      }
+    }
   }
 
   double check_mass = state_mass(0);

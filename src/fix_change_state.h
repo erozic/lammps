@@ -50,7 +50,7 @@ class FixChangeState : public Fix {
       double penalty;
   } penalty_pair;
 
-  enum StateMode {UNDEFINED, ATOMIC, MOLECULAR};
+  enum StateMode {ATOMIC, MOLECULAR};
 
   int nstates;
   StateMode state_mode;
