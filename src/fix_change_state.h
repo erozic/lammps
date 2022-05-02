@@ -55,16 +55,17 @@ class FixChangeState : public Fix {
   int nstates;
   StateMode state_mode;
   int *type_list;
-  int *mol_list; // list of indices in atom->molecules
-  int antisymflag;  // 1 = antisymmetric transition penalty matrix
+  Molecule **mol_list; // list of pointers to Molecule objects in atom->molecules
+  int mol_natoms;
+  double mol_charge;
   double **trans_matrix;
   int *ntrans;
   penalty_pair **transition;
 
   int regionflag; // 0 = anywhere in box, 1 = specific region
-  int iregion;  // swap region
-  char *idregion; // swap region ID
+  class Region *region; // swap region pointer
 
+  int antisymflag;  // 1 = antisymmetric transition penalty matrix
   int full_flag; // 1 = full (global) PE calc, 0 = single (local) PE calc
   int ke_flag;  // 1 = conserve ke, 0 = do not conserve ke
 
@@ -80,6 +81,9 @@ class FixChangeState : public Fix {
   double **sqrt_mass_ratio;
   int local_atom_nmax;
   int *local_atom_list;
+  tagint sel_mol_id; // tag/ID of the "selected" molecule
+  tagint *mol_atom_tag; // tags of atoms in the "selected" molecule (sorted)
+  int *mol_atom_type; // types of atoms in the "selected" molecule (for template determination)
 
   class RanPark *random_global;
   class RanPark *random_local;
@@ -89,16 +93,20 @@ class FixChangeState : public Fix {
   void options(int, char**);
   void process_transitions_file(const char*, int);
   std::string readline(FILE*, char*);
-  int type_index(int);
-  int mol_index(char*);
+  int atom_state_index(int);
+  int mol_state_index(Molecule*);
   double state_mass(int);
   void update_atom_list();
-  int random_particle();
+  int random_atom();
+  tagint random_molecule();
+  int determine_mol_state(tagint);
+  void change_mol_state(Molecule*);
   int attempt_atom_type_change_local();
   int attempt_mol_state_change_local();
   int attempt_atom_type_change_global();
   int attempt_mol_state_change_global();
-  double interaction_energy_local(int);
+  double atom_energy_local(int);
+  double mol_energy_local();
   double total_energy_global();
 };
 
