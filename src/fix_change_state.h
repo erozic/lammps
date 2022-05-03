@@ -55,7 +55,7 @@ class FixChangeState : public Fix {
   int nstates;
   StateMode state_mode;
   int *type_list;
-  Molecule **mol_list; // list of pointers to Molecule objects in atom->molecules
+  class Molecule **mol_list; // list of pointers to Molecule objects in atom->molecules
   int mol_natoms;
   double mol_charge;
   double **trans_matrix;
@@ -81,9 +81,15 @@ class FixChangeState : public Fix {
   double **sqrt_mass_ratio;
   int local_atom_nmax;
   int *local_atom_list;
+
   tagint sel_mol_id; // tag/ID of the "selected" molecule
   tagint *mol_atom_tag; // tags of atoms in the "selected" molecule (sorted)
   int *mol_atom_type; // types of atoms in the "selected" molecule (for template determination)
+  int sel_mol_group;
+  int sel_mol_group_bit;
+  int sel_mol_group_invbit;
+  std::string sel_mol_group_id;
+
 
   class RanPark *random_global;
   class RanPark *random_local;

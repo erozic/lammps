@@ -33,6 +33,7 @@
 #include "kspace.h"
 #include "memory.h"
 #include "modify.h"
+#include "molecule.h"
 #include "neighbor.h"
 #include "pair.h"
 #include "random_park.h"
@@ -40,10 +41,15 @@
 #include "tokenizer.h"
 #include "update.h"
 
+//#include "atom_vec.h"
+//#include "math_const.h"
+//#include "math_extra.h"
+
 #include <cmath>
 #include <cctype>
 #include <cfloat>
 #include <cstring>
+#include <algorithm>
 
 #define MAXLINE 256
 
@@ -54,9 +60,10 @@ using namespace FixConst;
 
 FixChangeState::FixChangeState(LAMMPS *lmp, int narg, char **arg) :
   Fix(lmp, narg, arg),
-  type_list(nullptr), mol_list(nullptr), local_atom_list(nullptr),
+  type_list(nullptr), mol_list(nullptr),
   trans_matrix(nullptr), ntrans(nullptr), transition(nullptr),
-  region(nullptr), sqrt_mass_ratio(nullptr), mol_atom_type(nullptr),
+  region(nullptr), sqrt_mass_ratio(nullptr), local_atom_list(nullptr),
+  mol_atom_tag(nullptr), mol_atom_type(nullptr),
   random_global(nullptr), random_local(nullptr), c_pe(nullptr)
 {
   if (narg < 12) error->all(FLERR,"Illegal fix change/state command");
@@ -155,7 +162,7 @@ FixChangeState::FixChangeState(LAMMPS *lmp, int narg, char **arg) :
   // set comm size needed by this Fix
   comm_forward = 1;
   if (state_mode == MOLECULAR) {
-    if (atom->qflag)
+    if (atom->q_flag)
       comm_forward += 1;
     //TODO bonds, angles, ...
   }
@@ -334,8 +341,8 @@ void FixChangeState::process_transitions_file(const char *filename, int rank)
       if (values.count() != 3)
         error->one(FLERR, "Invalid format of the transition penalties file");
       if (state_mode == MOLECULAR) {
-        int molindex1 = atom->find_molecule(values.next_string());
-        int molindex2 = atom->find_molecule(values.next_string());
+        int molindex1 = atom->find_molecule((char*)values.next_string().c_str());
+        int molindex2 = atom->find_molecule((char*)values.next_string().c_str());
         if (molindex1 < 0 || molindex2 < 0)
           error->one(FLERR, "Undefined mol state in transition penalties file");
         stateindex1 = mol_state_index(atom->molecules[molindex1]);
@@ -420,11 +427,9 @@ void FixChangeState::init()
     error->all(FLERR, "Illegal fix change/state command: < 2 states defined");
 
   if (!full_flag) {
-    //TODO check and rethink and figure out all these conditions!
     if ((force->kspace) || (force->pair == nullptr) ||
-        (force->pair->single_enable == 0) || (force->pair->tail_flag) ||
-        (force->pair_match("^hybrid",0)) || (force->pair_match("^eam",0))) {
-      full_flag = 1
+        (force->pair->single_enable == 0) || (force->pair->tail_flag)) {
+      full_flag = 1;
       if (comm->me == 0)
         error->warning(FLERR, "Automatically switched to full_energy option!");
     }
@@ -434,7 +439,7 @@ void FixChangeState::init()
     c_pe = modify->compute[modify->find_compute("thermo_pe")];
   curr_global_pe = NAN; // to be sure to fail if not set
 
-  // Molecule size check
+  // Molecule size check & selected molecule group creation
 
   if (state_mode == MOLECULAR) {
     mol_natoms = mol_list[0]->natoms;
@@ -446,6 +451,14 @@ void FixChangeState::init()
     memory->create(mol_atom_tag, mol_natoms, "change/state:mol_atom_tag");
     if (mol_atom_type) memory->destroy(mol_atom_type);
     memory->create(mol_atom_type, mol_natoms, "change/state:mol_atom_type");
+
+    sel_mol_group_id = fmt::format("FixChangeState:{}:SelMolGroup", id);
+    group->assign(sel_mol_group_id + " molecule -1");
+    sel_mol_group = group->find(sel_mol_group_id);
+    if (sel_mol_group == -1)
+      error->all(FLERR, "Could not create {}", sel_mol_group_id);
+    sel_mol_group_bit = group->bitmask[sel_mol_group];
+    sel_mol_group_invbit = sel_mol_group_bit ^ ~0;
   }
 
   // Mass check (if all same, if ke option on/off)
@@ -552,10 +565,11 @@ void FixChangeState::post_neighbor()
     return;
 
   /*TODO an update_mol_list() method when MOLECULAR ?
-   * 1) a map of mol_ID -> list of tags (local to global!?)
-   * 2) random_molecule from list of keys of map...
-   * 3) determine_mol_state is fully local then...
-   * 4)
+   *  1) a map of mol_ID -> list of tags (local to global!?)
+   *    - O(N) + a lot of communication & sorting
+   *  2) random_molecule from list of keys of map
+   *    - O(1), no comm
+   *  3) determine_mol_state is fully local then...
    */
   update_atom_list();
 
@@ -659,7 +673,8 @@ tagint FixChangeState::random_molecule()
    between two molecules with the same list of atom types (length and order)!
 
    Returns the index of mol state in mol_list (or -1).
-   Also, populates "mol_atom_tag" and "mol_atom_type".
+
+   Also, populates "mol_atom_tag", "mol_atom_type" and the "sel_mol_group"
 ------------------------------------------------------------------------- */
 int FixChangeState::determine_mol_state(tagint mol_id)
 {
@@ -669,19 +684,22 @@ int FixChangeState::determine_mol_state(tagint mol_id)
 
   // get all atoms (tags) that make up this molecule (on all procs)
 
-  int natoms, natoms_local = 0, nlocal = atom->nlocal;
+  int natoms, natoms_local = 0, nlocal = atom->nlocal, *mask = atom->mask;
   for (int i = 0; i < nlocal; i++) {
     if (atom->molecule[i] == mol_id) {
       if (natoms_local < mol_natoms)
         mol_atom_tag[natoms_local] = atom->tag[i];
       natoms_local++;
+      mask[i] |= sel_mol_group_bit;
+    } else {
+      mask[i] &= sel_mol_group_invbit;
     }
   }
+
   MPI_Allreduce(&natoms_local, &natoms, 1, MPI_INT, MPI_SUM, world);
-  if (natoms != mol_natoms) { // has to be same length as all templates
-    memory->destroy(mol_atom_tag_local);
+  if (natoms != mol_natoms)// has to be same length as all templates
     return stateindex;
-  }
+
   if (comm->me > 0) {
     MPI_Send(mol_atom_tag, natoms_local, MPI_LMP_TAGINT, 0, 17, world);
   } else {
@@ -711,7 +729,7 @@ int FixChangeState::determine_mol_state(tagint mol_id)
   for (int istate = 0; istate < nstates; istate++) {
     stateindex = istate;
     for (int iatom = 0; iatom < mol_natoms; iatom++) {
-      //TODO check other criteria/properties besides type... ?
+      // checks only atom type "signature" of molecule
       if (mol_list[istate]->type[iatom] != mol_atom_type[iatom]) {
         stateindex = -1;
         break;
@@ -757,7 +775,7 @@ int FixChangeState::attempt_atom_type_change_local()
   double energy_before, energy_after, penalty;
 
   int success = 0;
-  int i = random_particle();
+  int i = random_atom();
   if (i >= 0) {
     oldstate = atom->type[i];
     oldstateindex = atom_state_index(oldstate);
@@ -805,7 +823,7 @@ int FixChangeState::attempt_atom_type_change_local()
 ------------------------------------------------------------------------- */
 int FixChangeState::attempt_mol_state_change_local()
 {
-  //TODO fix rigid, rigid/small ?
+  //TODO fix rigid, rigid/small ??
 
   if (nparticles == 0) return 0;
 
@@ -832,15 +850,30 @@ int FixChangeState::attempt_mol_state_change_local()
   change_mol_state(newstate);
   comm->forward_comm(this);
   energy_after = mol_energy_local();
-  //TODO actual state change (and revert) possibly not necessary...
-  //     Maybe only use "atom_energy_local" to see how much energy WOULD
-  //     change IF state changed...
+  /*TODO actual state change (and revert) possibly not necessary...
+   *     Maybe only use "atom_energy_local" to see how much energy WOULD
+   *     change IF state changed...
+   */
 
   double boltzmann_factor = exp(beta*(energy_before - energy_after) - penalty);
   if (random_global->uniform() < boltzmann_factor) {
     success = 1;
     if (ke_flag) {
-      //TODO update velocity of the COM of a molecule...
+      double vcm[3], dv[3];
+      vcm[0] = vcm[1] = vcm[2] = 0.0;
+      group->vcm(sel_mol_group, mol_list[newstateindex]->masstotal, vcm);
+      // additive COM velocity correction (to keep relative motion inside molecule)
+      dv[0] = vcm[0] * (sqrt_mass_ratio[oldstateindex][newstateindex] - 1);
+      dv[1] = vcm[1] * (sqrt_mass_ratio[oldstateindex][newstateindex] - 1);
+      dv[2] = vcm[2] * (sqrt_mass_ratio[oldstateindex][newstateindex] - 1);
+      for (int iatom = 0; iatom < mol_natoms; iatom++) {
+        int i = atom->map(mol_atom_tag[iatom]);
+        if (i >= 0) {
+          atom->v[i][0] += dv[0];
+          atom->v[i][1] += dv[1];
+          atom->v[i][2] += dv[2];
+        }
+      }
     }
   } else {
     change_mol_state(oldstate);
@@ -866,7 +899,7 @@ int FixChangeState::attempt_atom_type_change_global()
 
   energy_before = curr_global_pe;
 
-  int i = random_particle();
+  int i = random_atom();
   if (i >= 0) {
     oldstate = atom->type[i];
     oldstateindex = atom_state_index(oldstate);
@@ -922,7 +955,7 @@ int FixChangeState::attempt_atom_type_change_global()
 ------------------------------------------------------------------------- */
 int FixChangeState::attempt_mol_state_change_global()
 {
-  //TODO fix rigid, rigid/small ?
+  //TODO fix rigid, rigid/small ??
 
   if (nparticles == 0) return 0;
 
@@ -957,7 +990,21 @@ int FixChangeState::attempt_mol_state_change_global()
     success = 1;
     curr_global_pe = energy_after;
     if (ke_flag) {
-      //TODO update velocity of the COM of a molecule...
+      double vcm[3], dv[3];
+      vcm[0] = vcm[1] = vcm[2] = 0.0;
+      group->vcm(sel_mol_group, mol_list[newstateindex]->masstotal, vcm);
+      // additive COM velocity correction (to keep relative motion inside molecule)
+      dv[0] = vcm[0] * (sqrt_mass_ratio[oldstateindex][newstateindex] - 1);
+      dv[1] = vcm[1] * (sqrt_mass_ratio[oldstateindex][newstateindex] - 1);
+      dv[2] = vcm[2] * (sqrt_mass_ratio[oldstateindex][newstateindex] - 1);
+      for (int iatom = 0; iatom < mol_natoms; iatom++) {
+        int i = atom->map(mol_atom_tag[iatom]);
+        if (i >= 0) {
+          atom->v[i][0] += dv[0];
+          atom->v[i][1] += dv[1];
+          atom->v[i][2] += dv[2];
+        }
+      }
     }
   } else {
     change_mol_state(oldstate);
@@ -1087,7 +1134,7 @@ int FixChangeState::pack_forward_comm(int n, int *list, double *buf, int /*pbc_f
     j = list[i];
     buf[m++] = atom->type[j];
     if (state_mode == MOLECULAR) {
-      if (atom->qflag)
+      if (atom->q_flag)
         buf[m++] = atom->q[j];
       //TODO bonds, angles, ...
     }
@@ -1106,7 +1153,7 @@ void FixChangeState::unpack_forward_comm(int n, int first, double *buf)
   for (i = first; i < last; i++) {
     atom->type[i] = static_cast<int>(buf[m++]);
     if (state_mode == MOLECULAR) {
-      if (atom->qflag)
+      if (atom->q_flag)
         atom->q[i] = buf[m++];
       //TODO bonds, angles, ...
     }
