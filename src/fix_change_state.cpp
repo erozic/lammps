@@ -41,10 +41,6 @@
 #include "tokenizer.h"
 #include "update.h"
 
-//#include "atom_vec.h"
-//#include "math_const.h"
-//#include "math_extra.h"
-
 #include <cmath>
 #include <cctype>
 #include <cfloat>
