@@ -285,10 +285,9 @@ void FixChangeState::options(int narg, char **arg)
       iarg++;
       if (iarg + 1 > narg)
         error->all(FLERR, "Illegal fix change/state command (region)");
-      int iregion = domain->find_region(arg[iarg]);
-      if (iregion == -1)
+      region = domain->get_region_by_id(arg[iarg]);
+      if (!region)
         error->all(FLERR, "Region ID for fix change/state does not exist");
-      region = domain->regions[iregion];
       regionflag = 1;
       iarg++;
     } else if (strcmp(arg[iarg], "full_energy") == 0) {
@@ -1112,7 +1111,7 @@ double FixChangeState::total_energy_global()
 
   if (modify->n_pre_reverse) modify->pre_reverse(eflag, vflag);
   //reverse_comm not necessary because forces irrelevant for energy calculation
-  if (modify->n_post_force) modify->post_force(vflag);
+  if (modify->n_post_force_any) modify->post_force(vflag);
 
   update->eflag_global = update->ntimestep;
   double total_energy = c_pe->compute_scalar();
