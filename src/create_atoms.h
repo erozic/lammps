@@ -32,9 +32,10 @@ class CreateAtoms : public Command {
  private:
   int ntype, style, mode, nbasis, nrandom, seed;
   int remapflag;
-  int maxtries;
+  int maxtry;
+  int quat_user;
   int overlapflag;
-  double overlap_radius;
+  double overlap;
   int subsetflag;
   bigint nsubset;
   double subsetfrac;
@@ -57,7 +58,6 @@ class CreateAtoms : public Command {
   class Molecule *onemol;
   class RanMars *ranmol;
   class RanMars *ranlatt;
-  double **temp_mol_coords;
 
   int triclinic;
   double sublo[3], subhi[3];    // epsilon-extended proc sub-box for adding atoms
@@ -66,8 +66,7 @@ class CreateAtoms : public Command {
   void add_random();
   void add_lattice();
   void loop_lattice(int);
-  void gen_mol_coords(double *, double * = nullptr);
-  void create_mol();
+  void add_molecule(double *);
   int vartest(double *);    // evaluate a variable with new atom position
 };
 

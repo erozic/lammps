@@ -48,6 +48,7 @@ agilio
 Agilio
 agni
 Agnolin
+Ahrens
 Ai
 Aidan
 aij
@@ -512,6 +513,8 @@ configfile
 configurational
 conformational
 Connor
+conp
+conq
 ConstMatrix
 Contrib
 cooperativity
@@ -650,6 +653,7 @@ deepskyblue
 defgrad
 defn
 deformable
+Deissenbeck
 del
 delaystep
 deleteIDs
@@ -693,6 +697,7 @@ DFT
 dftb
 dh
 dhex
+di
 dia
 diag
 diagonalization
@@ -784,6 +789,7 @@ dtheta
 dtshrink
 du
 dU
+Ducastelle
 Dudarev
 Duin
 Dullweber
@@ -867,6 +873,7 @@ Eisenforschung
 Ejtehadi
 El
 elaplong
+elastance
 Electroneg
 electronegative
 electronegativity
@@ -890,6 +897,7 @@ Embt
 emi
 emol
 eN
+endian
 energetics
 energyCorr
 eng
@@ -979,6 +987,7 @@ evector
 Everaers
 Evgeny
 evirials
+ew
 ewald
 Ewald
 excitations
@@ -1067,6 +1076,7 @@ fld
 floralwhite
 Florez
 flv
+fm
 fmackay
 fmag
 fmass
@@ -1246,6 +1256,7 @@ Gubbins
 Guenole
 Guericke
 gui
+Guillope
 Gumbsch
 Gunsteren
 Gunzenmuller
@@ -1315,6 +1326,7 @@ hiID
 Hijazi
 Hilger
 Hinestrosa
+hipFFT
 histo
 histogrammed
 histogramming
@@ -1489,6 +1501,7 @@ iva
 Ivanov
 Ivector
 Iw
+Iwers
 iwyu
 ixcm
 ixx
@@ -1722,6 +1735,7 @@ lebedeva
 Lebedeva
 Lebold
 Lechman
+Legrand
 Lehoucq
 Leimkuhler
 Leite
@@ -1938,6 +1952,7 @@ maxsize
 maxspecial
 maxSteps
 maxstrain
+maxtry
 maxwell
 Maxwellian
 maxX
@@ -1973,6 +1988,7 @@ mediumvioletred
 Mees
 Mehl
 Mei
+Meissner
 Melchor
 Meloni
 Melrose
@@ -2001,6 +2017,7 @@ mesoscopic
 metadata
 metadynamics
 Metadynamics
+metallicity
 Methfessel
 methine
 Metin
@@ -2636,6 +2653,7 @@ Polarizable
 polarizables
 polarizer
 Politano
+Politecnico
 polyA
 polybond
 polydisperse
@@ -2656,6 +2674,7 @@ postfixed
 postfixes
 Postma
 Potapkin
+potentiostat
 potin
 Pourtois
 powderblue
@@ -2759,6 +2778,7 @@ qopenmp
 qoverride
 qqr
 qqrd
+Qsb
 qtb
 quadratically
 quadrupolar
@@ -2794,6 +2814,7 @@ Randisi
 randomizations
 rann
 RANN
+Rapetti
 Raphson
 Rappe
 Ravelo
@@ -2929,8 +2950,10 @@ Rmin
 RMS
 rmsd
 rnage
+rng
 rNEMD
 ro
+rocFFT
 Rochus
 Rockett
 rocksalt
@@ -2939,6 +2962,7 @@ Rohart
 Ronchetti
 Ronevich
 Rosati
+Rosato
 Rosenberger
 Rossky
 rosybrown
@@ -3003,6 +3027,7 @@ Scalable
 scalexy
 scalexz
 scaleyz
+Scalfi
 Schaik
 Schilfgarde
 Schimansky
@@ -3115,6 +3140,7 @@ smallbig
 smallint
 Smallint
 smallsmall
+smatb
 smd
 SMD
 smi
@@ -3150,6 +3176,7 @@ SPH
 Spickermann
 splined
 spparks
+Sprik
 Springer
 springgreen
 spx
@@ -3383,6 +3410,7 @@ toolchain
 topologies
 Toporov
 Torder
+Torino
 torsions
 Tosi
 Toukmaji
@@ -3754,6 +3782,7 @@ ylat
 ylo
 ymax
 ymin
+yml
 Yoshida
 ys
 ysu
