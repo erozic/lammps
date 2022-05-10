@@ -45,8 +45,8 @@ class FixChangeState : public Fix {
  private:
   int nsteps, ncycles, seed;
 
-  typedef struct penalty_pair { // convenience structure...
-      int stateindex; // index of a "state", i.e. an atom type or mol template
+  typedef struct penalty_pair {
+      int stateindex; // index of a "to" state
       double penalty;
   } penalty_pair;
 

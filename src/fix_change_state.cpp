@@ -6,7 +6,6 @@
 
    Copyright (2003) Sandia Corporation.  Under the terms of Contract
    DE-AC04-94AL85000 with Sandia Corporation, the U.S. Government retains
-   certain rights in this software.  This software is distributed under
    the GNU General Public License.
 
    See the README file in the top-level LAMMPS directory.
@@ -137,7 +136,8 @@ FixChangeState::FixChangeState(LAMMPS *lmp, int narg, char **arg) :
     }
     if (nstates < 2)
       error->all(FLERR, "Illegal fix change/state command: < 2 mols");
-    memory->create(mol_list, nstates, "change/state:mol_list");
+    mol_list = (class Molecule **) memory->smalloc(
+        nstates * sizeof(class Molecule *), "change/state:mol_list");
     for (int istate = 0; istate < nstates; istate++) {
       int molindex = atom->find_molecule(arg[iarg + istate]);
       if (molindex == -1)
@@ -170,7 +170,7 @@ FixChangeState::FixChangeState(LAMMPS *lmp, int narg, char **arg) :
     memory->create(trans_matrix, nstates, nstates, "change/state:trans_matrix");
     for (int istate = 0; istate < nstates; istate++)
       for (int jstate = 0; jstate < nstates; jstate++)
-        trans_matrix[istate][istate] = INFINITY;
+        trans_matrix[istate][jstate] = INFINITY;
     process_transitions_file(arg[iarg], 0);
     iarg++;
     MPI_Bcast(*trans_matrix, nstates*nstates, MPI_DOUBLE, 0, world);
@@ -195,21 +195,20 @@ FixChangeState::FixChangeState(LAMMPS *lmp, int narg, char **arg) :
 
   // print transition matrix to log file
   if (comm->me == 0) {
-    std::string pen_mat_str = "";
+    std::string pen_mat_out = "  Transition matrix from file:\n";
     for (int istate = 0; istate < nstates; istate++) {
-      pen_mat_str += fmt::format(" |{:6.2f}|", trans_matrix[istate][0]);
+      pen_mat_out += fmt::format("    |{:^6.2f}|", trans_matrix[istate][0]);
       for (int jstate = 1; jstate < nstates; jstate++)
-        pen_mat_str += fmt::format("{:6.2f}|", trans_matrix[istate][jstate]);
-      pen_mat_str += "\n\n";
+        pen_mat_out += fmt::format("{:^6.2f}|", trans_matrix[istate][jstate]);
+      pen_mat_out += "\n";
     }
-    utils::logmesg(lmp,
-        "\n(FIX change/state) Transition matrix from file:\n{}", pen_mat_str);
+    utils::logmesg(lmp, pen_mat_out);
   }
 
   // create the transition lists for each state (from the matrix)
   memory->create(ntrans, nstates, "change/state:ntrans");
   transition = (penalty_pair **) memory->smalloc(
-      nstates*sizeof(penalty_pair *), "change/state:transition");
+      nstates * sizeof(penalty_pair *), "change/state:transition");
   for (int istate = 0; istate < nstates; istate++) {
     ntrans[istate] = 0;
     for (int jstate = 0; jstate < nstates; jstate++) {
@@ -218,8 +217,9 @@ FixChangeState::FixChangeState(LAMMPS *lmp, int narg, char **arg) :
     }
     if (ntrans[istate] > 0) {
       transition[istate] = (penalty_pair *) memory->smalloc(
-          ntrans[istate]*sizeof(penalty_pair), "change/state:transition-part");
+          ntrans[istate] * sizeof(penalty_pair), "change/state:transition-part");
     } else {
+      transition[istate] = nullptr;
       if (state_mode == MOLECULAR && comm->me == 0)
         error->warning(FLERR, "No transitions defined for molecule template {}",
             mol_list[istate]->id);
@@ -257,14 +257,15 @@ FixChangeState::FixChangeState(LAMMPS *lmp, int narg, char **arg) :
 FixChangeState::~FixChangeState()
 {
   memory->destroy(type_list);
-  memory->destroy(mol_list);
+  memory->sfree(mol_list);
   memory->destroy(trans_matrix);
   memory->destroy(ntrans);
   for (int istate = 0; istate < nstates; istate++)
     memory->sfree(transition[istate]);
   memory->sfree(transition);
   memory->destroy(sqrt_mass_ratio);
-  memory->destroy(local_atom_list);
+  memory->sfree(local_atom_list);
+  memory->destroy(mol_atom_tag);
   memory->destroy(mol_atom_type);
   delete random_global;
   delete random_local;
@@ -606,13 +607,13 @@ void FixChangeState::update_atom_list()
   int *mask = atom->mask;
 
   if (atom->nmax > local_atom_nmax) {
-    memory->sfree(local_atom_list);
     local_atom_nmax = atom->nmax;
-    local_atom_list = (int*)memory->smalloc(local_atom_nmax*sizeof(int),
-        "change/state:local_atom_list");
+    local_atom_list = (int *) memory->srealloc(local_atom_list,
+        local_atom_nmax * sizeof(int), "change/state:local_atom_list");
   }
 
   nparticles_local = 0;
+  nparticles_before = 0;
 
   for (int i = 0; i < nlocal; i++) {
     if (regionflag && region->match(x[i][0], x[i][1], x[i][2]) != 1)
@@ -633,7 +634,7 @@ void FixChangeState::update_atom_list()
 int FixChangeState::random_atom()
 {
   int i = -1;
-  int iwhichglobal = static_cast<int> (nparticles*random_global->uniform());
+  int iwhichglobal = static_cast<int> (nparticles * random_global->uniform());
   if ((iwhichglobal >= nparticles_before) &&
       (iwhichglobal < nparticles_before + nparticles_local)) {
     int iwhichlocal = iwhichglobal - nparticles_before;
@@ -673,9 +674,8 @@ tagint FixChangeState::random_molecule()
 ------------------------------------------------------------------------- */
 int FixChangeState::determine_mol_state(tagint mol_id)
 {
-  int stateindex = -1;
   if (mol_id <= 0)
-    return stateindex;
+    error->all(FLERR, "Found an atom outside a molecule (mol ID <= 0) in the fix group");
 
   // get all atoms (tags) that make up this molecule (on all procs)
 
@@ -692,18 +692,18 @@ int FixChangeState::determine_mol_state(tagint mol_id)
   }
 
   MPI_Allreduce(&natoms_local, &natoms, 1, MPI_INT, MPI_SUM, world);
-  if (natoms != mol_natoms)// has to be same length as all templates
-    return stateindex;
+  if (natoms != mol_natoms)
+    error->all(FLERR, "Found a molecule larger than the molecule templates!");
 
   if (comm->me > 0) {
     MPI_Send(mol_atom_tag, natoms_local, MPI_LMP_TAGINT, 0, 17, world);
   } else {
     int offset = natoms_local;
     for (int rank = 1; rank < comm->nprocs; rank++) {
-      MPI_Status *status;
+      MPI_Status status;
       int recv_count;
-      MPI_Recv(&mol_atom_tag[offset], mol_natoms - offset, MPI_LMP_TAGINT, rank, 17, world, status);
-      MPI_Get_count(status, MPI_LMP_TAGINT, &recv_count);
+      MPI_Recv(&mol_atom_tag[offset], mol_natoms - offset, MPI_LMP_TAGINT, rank, 17, world, &status);
+      MPI_Get_count(&status, MPI_LMP_TAGINT, &recv_count);
       offset += recv_count;
     }
   }
@@ -721,6 +721,7 @@ int FixChangeState::determine_mol_state(tagint mol_id)
   }
   MPI_Allreduce(MPI_IN_PLACE, mol_atom_type, mol_natoms, MPI_INT, MPI_MAX, world);
 
+  int stateindex = -1;
   for (int istate = 0; istate < nstates; istate++) {
     stateindex = istate;
     for (int iatom = 0; iatom < mol_natoms; iatom++) {
@@ -775,7 +776,7 @@ int FixChangeState::attempt_atom_type_change_local()
     oldstate = atom->type[i];
     oldstateindex = atom_state_index(oldstate);
     if (oldstateindex < 0)
-      error->all(FLERR, "Undeclared atom type found in the fix group");
+      error->one(FLERR, "Undeclared atom type found in the fix group");
     if (ntrans[oldstateindex] == 0)
       return 0; // no possible transitions for this particle...
 
@@ -899,7 +900,7 @@ int FixChangeState::attempt_atom_type_change_global()
     oldstate = atom->type[i];
     oldstateindex = atom_state_index(oldstate);
     if (oldstateindex < 0)
-      error->all(FLERR, "Undeclared atom type found in the fix group");
+      error->one(FLERR, "Undeclared atom type found in the fix group");
     if (ntrans[oldstateindex] == 0)
       return 0; // no possible transitions for this particle...
 
@@ -1041,11 +1042,13 @@ double FixChangeState::atom_energy_local(int i)
 
     if (i == j) continue;
 
-    // exclude intramolecular interaction...
-    if (state_mode == MOLECULAR)
-      //TODO some kind of option to include intramolecular energy ??
+    if (state_mode == MOLECULAR) {
+      // exclude intramolecular interaction...
       if (atom->molecule[i] == sel_mol_id)
         continue;
+      //TODO some kind of option to include intramolecular energy ??
+      // ... if yes then half energy (because of double counting)
+    }
 
     double *xj  = x[j];
     int jtype = type[j];
