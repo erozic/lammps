@@ -34,6 +34,7 @@
 #include "modify.h"
 #include "molecule.h"
 #include "neighbor.h"
+#include "neigh_list.h"
 #include "pair.h"
 #include "random_park.h"
 #include "region.h"
@@ -503,6 +504,7 @@ void FixChangeState::init()
       error->all(FLERR, "Could not create {}", sel_mol_group_id);
     sel_mol_group_bit = group->bitmask[sel_mol_group];
     sel_mol_group_invbit = sel_mol_group_bit ^ ~0;
+    sel_mol_id = -1;
   }
 
   // Mass check (if all same, if ke option on/off)
@@ -837,7 +839,7 @@ int FixChangeState::attempt_atom_type_change_local()
     if (ntrans[oldstateindex] == 0)
       return 0; // no possible transitions for this particle...
 
-    energy_before = atom_energy_local(i);
+    energy_before = atom_energy_local(i, false);
 
     trans_index = static_cast<int>(ntrans[oldstateindex]*random_local->uniform());
     penalty = transition[oldstateindex][trans_index].penalty;
@@ -845,7 +847,7 @@ int FixChangeState::attempt_atom_type_change_local()
     newstate = type_list[newstateindex];
 
     atom->type[i] = newstate;
-    energy_after = atom_energy_local(i);
+    energy_after = atom_energy_local(i, false);
 
     double boltzmann_factor = exp(beta*(energy_before - energy_after) - penalty);
     if (random_local->uniform() < boltzmann_factor) {
@@ -1065,10 +1067,14 @@ int FixChangeState::attempt_mol_state_change_global()
 }
 
 /* ----------------------------------------------------------------------
-   Compute an atom's interaction energy with (local) atoms
+   Compute an atom's (pair-only) interaction energy with atom's neighbors.
+   If "in_mol" adds only half the energy for atoms in the same molecule...
+    - can be done this way because the fix is post-neighbor
+    - this automatically takes care of intramolecular energy exclusion
+   through the "neighy_modify exclude molecule/intra"
 ------------------------------------------------------------------------- */
 
-double FixChangeState::atom_energy_local(int i)
+double FixChangeState::atom_energy_local(int i, bool in_mol)
 {
   double **x = atom->x;
   int *type = atom->type;
@@ -1080,21 +1086,23 @@ double FixChangeState::atom_energy_local(int i)
 
   double delx, dely, delz, rsq;
 
-  double force = 0.0;
+  double fforce = 0.0;
   double energy = 0.0;
+  double mol_factor;
 
   int nall = atom->nlocal + atom->nghost;
 
-  for (int j = 0; j < nall; j++) {
+  int numneigh = force->pair->list->numneigh[i];
+  int *ineighbors = force->pair->list->firstneigh[i];
 
-    if (i == j) continue;
+  for (int jj = 0; jj < numneigh; jj++) {
 
-    if (state_mode == MOLECULAR) {
-      // exclude intramolecular interaction...
-      if (atom->molecule[i] == sel_mol_id)
-        continue;
-      //TODO some kind of option to include intramolecular energy ??
-      // ... if yes then half energy (because of double counting)
+    int j = ineighbors[jj];
+
+    mol_factor = 1.0;
+    if (in_mol) {
+      if (atom->molecule[j] == atom->molecule[i])
+        mol_factor = 0.5;
     }
 
     double *xj  = x[j];
@@ -1106,15 +1114,17 @@ double FixChangeState::atom_energy_local(int i)
     rsq = delx*delx + dely*dely + delz*delz;
 
     if (rsq < cutsq[itype][jtype])
-      energy += pair->single(i, j, itype, jtype, rsq, 1.0, 1.0, force);
+      energy += mol_factor * pair->single(i, j, itype, jtype, rsq, 1.0, 1.0, fforce);
   }
+
+  //TODO energy from bonds, angles, ... ??
 
   return energy;
 }
 
 /* ----------------------------------------------------------------------
-   Compute a molecule's interaction energy with (local) atoms (across all
-   procs that own atoms of the molecule).
+   Compute a molecule's (pair-only) interaction energy with (local) atoms
+   (across all procs that own atoms of the molecule).
 ------------------------------------------------------------------------- */
 
 double FixChangeState::mol_energy_local()
@@ -1123,7 +1133,7 @@ double FixChangeState::mol_energy_local()
   for (int iatom = 0; iatom < mol_natoms; iatom++) {
     int i = atom->map(mol_atom_tag[iatom]);
     if (i >= 0)
-      energy_local += atom_energy_local(i);
+      energy_local += atom_energy_local(i, true);
   }
 
   double energy_tot;

@@ -87,11 +87,11 @@ class FixChangeState : public Fix {
   int *local_atom_list;
 
   tagint sel_mol_id; // tag/ID of the "selected" molecule
-  tagint *mol_atom_tag; // tags of atoms in the "selected" molecule (sorted)
-  int *mol_atom_type; // types of atoms in the "selected" molecule (for template determination)
   int sel_mol_group;
   int sel_mol_group_bit;
   int sel_mol_group_invbit;
+  tagint *mol_atom_tag; // sorted "sel_mol" atom tags
+  int *mol_atom_type; // sorted "sel_mol" atom types
 
 
   class RanPark *random_global;
@@ -122,7 +122,7 @@ class FixChangeState : public Fix {
   int attempt_atom_type_change_global();
   int attempt_mol_state_change_global();
 
-  double atom_energy_local(int);
+  double atom_energy_local(int, bool);
   double mol_energy_local();
   double total_energy_global();
 };
