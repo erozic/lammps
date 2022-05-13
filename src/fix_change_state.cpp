@@ -54,10 +54,11 @@ using namespace FixConst;
 /* ---------------------------------------------------------------------- */
 
 FixChangeState::FixChangeState(LAMMPS *lmp, int narg, char **arg) :
-  Fix(lmp, narg, arg),
-  type_list(nullptr), mol_list(nullptr),
+  Fix(lmp, narg, arg), type_list(nullptr), mol_list(nullptr),
   trans_matrix(nullptr), ntrans(nullptr), transition(nullptr),
-  region(nullptr), sqrt_mass_ratio(nullptr), local_atom_list(nullptr),
+  region(nullptr), state_group_ids(nullptr),
+  state_group_masks(nullptr), state_group_invmasks(nullptr),
+  sqrt_mass_ratio(nullptr), local_atom_list(nullptr),
   mol_atom_tag(nullptr), mol_atom_type(nullptr),
   random_global(nullptr), random_local(nullptr), c_pe(nullptr)
 {
@@ -136,8 +137,8 @@ FixChangeState::FixChangeState(LAMMPS *lmp, int narg, char **arg) :
     }
     if (nstates < 2)
       error->all(FLERR, "Illegal fix change/state command: < 2 mols");
-    mol_list = (class Molecule **) memory->smalloc(
-        nstates * sizeof(class Molecule *), "change/state:mol_list");
+    mol_list = (class Molecule**) memory->smalloc(
+        nstates * sizeof(class Molecule*), "change/state:mol_list");
     for (int istate = 0; istate < nstates; istate++) {
       int molindex = atom->find_molecule(arg[iarg + istate]);
       if (molindex == -1)
@@ -207,8 +208,8 @@ FixChangeState::FixChangeState(LAMMPS *lmp, int narg, char **arg) :
 
   // create the transition lists for each state (from the matrix)
   memory->create(ntrans, nstates, "change/state:ntrans");
-  transition = (penalty_pair **) memory->smalloc(
-      nstates * sizeof(penalty_pair *), "change/state:transition");
+  transition = (penalty_pair**) memory->smalloc(
+      nstates * sizeof(penalty_pair*), "change/state:transition");
   for (int istate = 0; istate < nstates; istate++) {
     ntrans[istate] = 0;
     for (int jstate = 0; jstate < nstates; jstate++) {
@@ -216,7 +217,7 @@ FixChangeState::FixChangeState(LAMMPS *lmp, int narg, char **arg) :
         ntrans[istate]++;
     }
     if (ntrans[istate] > 0) {
-      transition[istate] = (penalty_pair *) memory->smalloc(
+      transition[istate] = (penalty_pair*) memory->smalloc(
           ntrans[istate] * sizeof(penalty_pair), "change/state:transition-part");
     } else {
       transition[istate] = nullptr;
@@ -252,25 +253,6 @@ FixChangeState::FixChangeState(LAMMPS *lmp, int narg, char **arg) :
   local_atom_nmax = 0;
 }
 
-/* ---------------------------------------------------------------------- */
-
-FixChangeState::~FixChangeState()
-{
-  memory->destroy(type_list);
-  memory->sfree(mol_list);
-  memory->destroy(trans_matrix);
-  memory->destroy(ntrans);
-  for (int istate = 0; istate < nstates; istate++)
-    memory->sfree(transition[istate]);
-  memory->sfree(transition);
-  memory->destroy(sqrt_mass_ratio);
-  memory->sfree(local_atom_list);
-  memory->destroy(mol_atom_tag);
-  memory->destroy(mol_atom_type);
-  delete random_global;
-  delete random_local;
-}
-
 /* ----------------------------------------------------------------------
    Parse optional parameters at end of input line
 ------------------------------------------------------------------------- */
@@ -279,6 +261,7 @@ void FixChangeState::options(int narg, char **arg)
   regionflag = 0;
   full_flag = 0;
   ke_flag = 0;
+  ngroups = 0;
 
   int iarg = 0;
   while (iarg < narg) {
@@ -297,12 +280,72 @@ void FixChangeState::options(int narg, char **arg)
     } else if (strcmp(arg[iarg], "ke") == 0) {
       iarg++;
       if (iarg + 1 > narg)
-        error->all(FLERR,"Illegal fix change/state command (ke)");
+        error->all(FLERR, "Illegal fix change/state command (ke)");
       ke_flag = utils::logical(FLERR, arg[iarg], false, lmp);
       iarg++;
+    } else if (strcmp(arg[iarg], "groups") == 0) {
+      iarg++;
+      if (iarg + nstates > narg)
+        error->all(FLERR, "Illegal fix change/state command (groups)");
+      ngroups++;
+      if (ngroups == 1) {
+        state_group_ids = (std::string***)memory->smalloc(nstates * sizeof(std::string**),
+            "change/state:state_group_ids");
+        for (int istate = 0; istate < nstates; istate++)
+          state_group_ids[istate] = nullptr;
+      }
+      for (int istate = 0; istate < nstates; istate++) {
+        state_group_ids[istate] = (std::string**)memory->srealloc(state_group_ids[istate],
+            ngroups * sizeof(std::string*), "change/state:state_groups-part");
+        state_group_ids[istate][ngroups-1] = new std::string(arg[iarg]);
+        iarg++;
+      }
     } else
       error->all(FLERR, "Illegal fix change/state command: unknown option");
   }
+}
+
+/* ---------------------------------------------------------------------- */
+
+FixChangeState::~FixChangeState()
+{
+  memory->destroy(type_list);
+  memory->sfree(mol_list);
+  memory->destroy(trans_matrix);
+  memory->destroy(ntrans);
+  for (int istate = 0; istate < nstates; istate++) {
+    memory->sfree(transition[istate]);
+    for (int igroup = 0; igroup < ngroups; igroup++)
+      delete state_group_ids[istate][igroup];
+    if (ngroups > 0)
+      memory->sfree(state_group_ids[istate]);
+  }
+  memory->sfree(transition);
+  memory->sfree(state_group_ids);
+  delete[] state_group_masks;
+  delete[] state_group_invmasks;
+  memory->destroy(sqrt_mass_ratio);
+  memory->sfree(local_atom_list);
+  memory->destroy(mol_atom_tag);
+  memory->destroy(mol_atom_type);
+  delete random_global;
+  delete random_local;
+}
+
+/* ----------------------------------------------------------------------
+   Read a line of text from the input file and return it trimmed
+   (without comments and extra spaces).
+   Returns "EOF" as an std::string if it reached the end of file.
+------------------------------------------------------------------------- */
+std::string FixChangeState::readline(FILE *fp, char *rawline)
+{
+  if (fgets(rawline, MAXLINE, fp) == nullptr) {
+    if (feof(fp))
+      return "EOF";
+    else
+      error->one(FLERR, "Unexpected error reading the transition penalties file");
+  }
+  return utils::trim(utils::trim_comment(rawline));
 }
 
 /* ----------------------------------------------------------------------
@@ -359,22 +402,6 @@ void FixChangeState::process_transitions_file(const char *filename, int rank)
   }
 
   fclose(fp);
-}
-
-/* ----------------------------------------------------------------------
-   Read a line of text from the input file and return it trimmed
-   (without comments and extra spaces).
-   Returns "EOF" as an std::string if it reached the end of file.
-------------------------------------------------------------------------- */
-std::string FixChangeState::readline(FILE *fp, char *rawline)
-{
-  if (fgets(rawline, MAXLINE, fp) == nullptr) {
-    if (feof(fp))
-      return "EOF";
-    else
-      error->one(FLERR, "Unexpected error reading the transition penalties file");
-  }
-  return utils::trim(utils::trim_comment(rawline));
 }
 
 /* ----------------------------------------------------------------------
@@ -435,6 +462,27 @@ void FixChangeState::init()
     c_pe = modify->compute[modify->find_compute("thermo_pe")];
   curr_global_pe = NAN; // to be sure to fail if not set
 
+  // Setup additional groups per state (bitmasks etc.)
+
+  state_group_masks = new int[nstates]();
+  std::fill_n(state_group_masks, nstates, 0);
+  state_group_invmasks = new int[nstates]();
+  std::fill_n(state_group_invmasks, nstates, ~0);
+  for (int igroup = 0; igroup < ngroups; igroup++) {
+    for (int istate = 0; istate < nstates; istate++) {
+      std::string group_id = *state_group_ids[istate][igroup];
+      if (group_id == "none")
+        continue;
+      if (group_id == "all")
+        error->all(FLERR, "Can't use group 'all' with 'groups' keyword");
+      int group_index = group->find(group_id);
+      if (group_index == -1)
+        error->all(FLERR, "Group {} (from 'groups' keyword) does not exist", group_id);
+      state_group_masks[istate] |= group->bitmask[group_index];
+      state_group_invmasks[istate] &= (group->bitmask[group_index] ^ ~0);
+    }
+  }
+
   // Molecule size check & selected molecule group creation
 
   if (state_mode == MOLECULAR) {
@@ -448,8 +496,8 @@ void FixChangeState::init()
     if (mol_atom_type) memory->destroy(mol_atom_type);
     memory->create(mol_atom_type, mol_natoms, "change/state:mol_atom_type");
 
-    sel_mol_group_id = fmt::format("FixChangeState:{}:SelMolGroup", id);
-    group->assign(sel_mol_group_id + " molecule -1");
+    auto sel_mol_group_id = fmt::format("FixChangeState:{}:SelMolGroup", id);
+    group->assign(sel_mol_group_id + " empty");
     sel_mol_group = group->find(sel_mol_group_id);
     if (sel_mol_group == -1)
       error->all(FLERR, "Could not create {}", sel_mol_group_id);
@@ -552,6 +600,36 @@ double FixChangeState::state_mass(int stateindex)
 }
 
 /* ----------------------------------------------------------------------
+   Update the local list of atoms eligible for "state" changing
+------------------------------------------------------------------------- */
+
+void FixChangeState::update_atom_list()
+{
+  int nlocal = atom->nlocal;
+  double **x = atom->x;
+  int *mask = atom->mask;
+
+  if (atom->nmax > local_atom_nmax) {
+    local_atom_nmax = atom->nmax;
+    local_atom_list = (int*) memory->srealloc(local_atom_list,
+        local_atom_nmax * sizeof(int), "change/state:local_atom_list");
+  }
+
+  nparticles_local = 0;
+  nparticles_before = 0;
+
+  for (int i = 0; i < nlocal; i++) {
+    if (regionflag && region->match(x[i][0], x[i][1], x[i][2]) != 1)
+      continue;
+    if (mask[i] & groupbit)
+      local_atom_list[nparticles_local++] = i;
+  }
+
+  MPI_Allreduce(&nparticles_local, &nparticles, 1, MPI_INT, MPI_SUM, world);
+  MPI_Exscan(&nparticles_local, &nparticles_before, 1, MPI_INT, MPI_SUM, world);
+}
+
+/* ----------------------------------------------------------------------
    This is where the magic happens...
 ------------------------------------------------------------------------- */
 void FixChangeState::post_neighbor()
@@ -594,36 +672,6 @@ void FixChangeState::post_neighbor()
   nsuccesses += nsuccess;
 
   next_reneighbor = update->ntimestep + nsteps;
-}
-
-/* ----------------------------------------------------------------------
-   Update the local list of atoms eligible for "state" changing
-------------------------------------------------------------------------- */
-
-void FixChangeState::update_atom_list()
-{
-  int nlocal = atom->nlocal;
-  double **x = atom->x;
-  int *mask = atom->mask;
-
-  if (atom->nmax > local_atom_nmax) {
-    local_atom_nmax = atom->nmax;
-    local_atom_list = (int *) memory->srealloc(local_atom_list,
-        local_atom_nmax * sizeof(int), "change/state:local_atom_list");
-  }
-
-  nparticles_local = 0;
-  nparticles_before = 0;
-
-  for (int i = 0; i < nlocal; i++) {
-    if (regionflag && region->match(x[i][0], x[i][1], x[i][2]) != 1)
-      continue;
-    if (mask[i] & groupbit)
-      local_atom_list[nparticles_local++] = i;
-  }
-
-  MPI_Allreduce(&nparticles_local, &nparticles, 1, MPI_INT, MPI_SUM, world);
-  MPI_Exscan(&nparticles_local, &nparticles_before, 1, MPI_INT, MPI_SUM, world);
 }
 
 /* ----------------------------------------------------------------------
@@ -739,19 +787,28 @@ int FixChangeState::determine_mol_state(tagint mol_id)
 
 /* ----------------------------------------------------------------------
    Changes the state of the current molecule (in "mol_atom_tags") according
-   to the passed new state "mol_template".
+   to the new state molecule template (in mol_list).
+   Also, removes the current molecule atoms from the old state additional
+   groups and adds them to the new state additional groups.
 
-   NOTE: for now only the types and charges of atoms
-   TODO bonds, angles, ...
+   NOTE: for now only the types and charges of atoms change
 ------------------------------------------------------------------------- */
-void FixChangeState::change_mol_state(Molecule *mol_template)
+void FixChangeState::change_mol_state(int oldstateindex, int newstateindex)
 {
   for (int iatom = 0; iatom < mol_natoms; iatom++) {
     int i = atom->map(mol_atom_tag[iatom]);
     if (i >= 0) {
-      atom->type[i] = mol_template->type[iatom];
+      // type
+      atom->type[i] = mol_list[newstateindex]->type[iatom];
+      // charge
       if (atom->q_flag)
-        atom->q[i] = mol_template->q[iatom];
+        atom->q[i] = mol_list[newstateindex]->q[iatom];
+
+      // TODO bonds, angles, ...
+
+      // groups (out from old, into new)
+      atom->mask[i] &= state_group_invmasks[oldstateindex];
+      atom->mask[i] |= state_group_masks[newstateindex];
     }
   }
 }
@@ -819,11 +876,8 @@ int FixChangeState::attempt_atom_type_change_local()
 ------------------------------------------------------------------------- */
 int FixChangeState::attempt_mol_state_change_local()
 {
-  //TODO fix rigid, rigid/small ??
-
   if (nparticles == 0) return 0;
 
-  Molecule *oldstate, *newstate;
   int oldstateindex, newstateindex, trans_index;
   double energy_before, energy_after, penalty;
 
@@ -834,16 +888,14 @@ int FixChangeState::attempt_mol_state_change_local()
     error->all(FLERR, "Undeclared mol template found in the fix group");
   if (ntrans[oldstateindex] == 0)
     return 0; // no possible transitions for this molecule
-  oldstate = mol_list[oldstateindex];
 
   energy_before = mol_energy_local();
 
   trans_index = static_cast<int>(ntrans[oldstateindex]*random_global->uniform());
   penalty = transition[oldstateindex][trans_index].penalty;
   newstateindex = transition[oldstateindex][trans_index].stateindex;
-  newstate = mol_list[newstateindex];
 
-  change_mol_state(newstate);
+  change_mol_state(oldstateindex, newstateindex);
   comm->forward_comm(this);
   energy_after = mol_energy_local();
   /*TODO actual state change (and revert) possibly not necessary...
@@ -872,7 +924,7 @@ int FixChangeState::attempt_mol_state_change_local()
       }
     }
   } else {
-    change_mol_state(oldstate);
+    change_mol_state(newstateindex, oldstateindex);
     comm->forward_comm(this);
   }
 
@@ -951,11 +1003,8 @@ int FixChangeState::attempt_atom_type_change_global()
 ------------------------------------------------------------------------- */
 int FixChangeState::attempt_mol_state_change_global()
 {
-  //TODO fix rigid, rigid/small ??
-
   if (nparticles == 0) return 0;
 
-  Molecule *oldstate, *newstate;
   int oldstateindex, newstateindex, trans_index;
   double energy_before, energy_after, penalty;
 
@@ -968,14 +1017,12 @@ int FixChangeState::attempt_mol_state_change_global()
     error->all(FLERR, "Undeclared mol template found in the fix group");
   if (ntrans[oldstateindex] == 0)
     return 0; // no possible transitions for this molecule
-  oldstate = mol_list[oldstateindex];
 
   trans_index = static_cast<int>(ntrans[oldstateindex]*random_global->uniform());
   penalty = transition[oldstateindex][trans_index].penalty;
   newstateindex = transition[oldstateindex][trans_index].stateindex;
-  newstate = mol_list[newstateindex];
 
-  change_mol_state(newstate);
+  change_mol_state(oldstateindex, newstateindex);
   comm->forward_comm(this); // communicate change in type
   if (force->kspace) // recalculate charge stuff if necessary
     force->kspace->qsum_qsq();
@@ -1003,7 +1050,7 @@ int FixChangeState::attempt_mol_state_change_global()
       }
     }
   } else {
-    change_mol_state(oldstate);
+    change_mol_state(newstateindex, oldstateindex);
     /*
     comm->forward_comm(this);
     if (force->kspace)
@@ -1195,8 +1242,8 @@ void FixChangeState::write_restart(FILE *fp)
 
   if (comm->me == 0) {
     int size = n * sizeof(double);
-    fwrite(&size,sizeof(int),1,fp);
-    fwrite(list,sizeof(double),n,fp);
+    fwrite(&size, sizeof(int), 1, fp);
+    fwrite(list, sizeof(double), n, fp);
   }
 }
 
@@ -1206,12 +1253,12 @@ void FixChangeState::write_restart(FILE *fp)
 void FixChangeState::restart(char *buf)
 {
   int n = 0;
-  double *list = (double *) buf;
+  double *list = (double*) buf;
 
-  seed = static_cast<int> (list[n++]);
+  seed = static_cast<int>(list[n++]);
   random_global->reset(seed);
 
-  seed = static_cast<int> (list[n++]);
+  seed = static_cast<int>(list[n++]);
   random_local->reset(seed);
 
   next_reneighbor = (bigint) ubuf(list[n++]).i;

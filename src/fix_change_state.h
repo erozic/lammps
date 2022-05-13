@@ -59,15 +59,19 @@ class FixChangeState : public Fix {
   int mol_natoms;
   double mol_charge;
   double **trans_matrix;
+  int antisymflag;  // 1 = antisymmetric transition penalty matrix
   int *ntrans;
   penalty_pair **transition;
 
   int regionflag; // 0 = anywhere in box, 1 = specific region
   class Region *region; // swap region pointer
-
-  int antisymflag;  // 1 = antisymmetric transition penalty matrix
   int full_flag; // 1 = full (global) PE calc, 0 = single (local) PE calc
   int ke_flag;  // 1 = conserve ke, 0 = do not conserve ke
+  int ngroups; // number of additional groups per state
+  std::string ***state_group_ids;
+  int *state_group_masks;
+  int *state_group_invmasks;
+
 
   int nparticles;  // # of candidates on all procs
   int nparticles_local;  // # of candidates on this proc
@@ -88,7 +92,6 @@ class FixChangeState : public Fix {
   int sel_mol_group;
   int sel_mol_group_bit;
   int sel_mol_group_invbit;
-  std::string sel_mol_group_id;
 
 
   class RanPark *random_global;
@@ -96,21 +99,29 @@ class FixChangeState : public Fix {
 
   class Compute *c_pe;
 
+  // METHODS
+
   void options(int, char**);
-  void process_transitions_file(const char*, int);
   std::string readline(FILE*, char*);
+  void process_transitions_file(const char*, int);
+
   int atom_state_index(int);
   int mol_state_index(Molecule*);
   double state_mass(int);
+
   void update_atom_list();
+
   int random_atom();
   tagint random_molecule();
+
   int determine_mol_state(tagint);
-  void change_mol_state(Molecule*);
+  void change_mol_state(int, int);
+
   int attempt_atom_type_change_local();
   int attempt_mol_state_change_local();
   int attempt_atom_type_change_global();
   int attempt_mol_state_change_global();
+
   double atom_energy_local(int);
   double mol_energy_local();
   double total_energy_global();
