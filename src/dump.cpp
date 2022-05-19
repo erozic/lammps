@@ -142,7 +142,8 @@ Dump::Dump(LAMMPS *lmp, int /*narg*/, char **arg) : Pointers(lmp)
 
   if (strchr(filename,'*')) multifile = 1;
 
-  if (utils::strmatch(filename, "\\.bin$")) binary = 1;
+  if (utils::strmatch(filename, "\\.bin$")
+      || utils::strmatch(filename, "\\.lammpsbin$")) binary = 1;
   if (platform::has_compress_extension(filename)) compressed = 1;
 }
 
@@ -1086,6 +1087,7 @@ void Dump::modify_params(int narg, char **arg)
       }
       output->mode_dump[idump] = 1;
       output->every_time_dump[idump] = delta;
+      output->next_dump[idump] = update->ntimestep;
       iarg += 2;
 
     } else if (strcmp(arg[iarg],"fileper") == 0) {
