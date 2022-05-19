@@ -667,6 +667,7 @@ void FixChangeState::post_neighbor()
         nsuccess += attempt_atom_type_change_local();
     }
   }
+
   if (full_flag)
     comm->forward_comm(this);
 
