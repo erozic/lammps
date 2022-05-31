@@ -68,6 +68,7 @@ class FixChangeState : public Fix {
   int regionflag; // 0 = anywhere in box, 1 = specific region
   class Region *region; // swap region pointer
   int full_flag; // 1 = full (global) PE calc, 0 = single (local) PE calc
+  int skin_flag; // 1 = auto skin adjustment (maxcut - mincut); default 0
   int ke_flag;  // 1 = conserve ke, 0 = do not conserve ke
   int ngroups; // number of additional groups per state
   std::string ***state_group_ids;

@@ -261,6 +261,7 @@ void FixChangeState::options(int narg, char **arg)
 {
   regionflag = 0;
   full_flag = 0;
+  skin_flag = 0;
   ke_flag = 0;
   ngroups = 0;
 
@@ -278,6 +279,9 @@ void FixChangeState::options(int narg, char **arg)
     } else if (strcmp(arg[iarg], "full_energy") == 0) {
       iarg++;
       full_flag = 1;
+    } else if (strcmp(arg[iarg], "auto_skin") == 0) {
+      iarg++;
+      skin_flag = 1;
     } else if (strcmp(arg[iarg], "ke") == 0) {
       iarg++;
       if (iarg + 1 > narg)
@@ -561,7 +565,7 @@ void FixChangeState::init()
   // Cutoff distance check (because reneighboring not done)
 
   double **cutsq = force->pair->cutsq;
-  double min_cutsq = INFINITY, max_cutsq = 0;
+  double min_cut = INFINITY, max_cut = 0;
   int itype;
   for (int istate = 0; istate < nstates; istate++) {
     if (state_mode == MOLECULAR) {
@@ -569,23 +573,33 @@ void FixChangeState::init()
         itype = mol_list[istate]->type[iatom];
         for (int jtype = 1; jtype <= atom->ntypes; jtype++) {
           double cutoff = cutsq[itype][jtype];
-          if (cutoff < min_cutsq) min_cutsq = cutoff;
-          if (cutoff > max_cutsq) max_cutsq = cutoff;
+          if (cutoff < min_cut) min_cut = cutoff;
+          if (cutoff > max_cut) max_cut = cutoff;
         }
       }
     } else {
       itype = type_list[istate];
       for (int jtype = 1; jtype <= atom->ntypes; jtype++) {
         double cutoff = cutsq[itype][jtype];
-        if (cutoff < min_cutsq) min_cutsq = cutoff;
-        if (cutoff > max_cutsq) max_cutsq = cutoff;
+        if (cutoff < min_cut) min_cut = cutoff;
+        if (cutoff > max_cut) max_cut = cutoff;
       }
     }
   }
-  if (std::sqrt(max_cutsq) > std::sqrt(min_cutsq) + neighbor->skin)
-    if (comm->me == 0) error->warning(FLERR,
-        "Max pair cutoff ({}) is larger than min pair cutoff ({}) + skin ({})",
-        std::sqrt(max_cutsq), std::sqrt(min_cutsq), neighbor->skin);
+  min_cut = std::sqrt(min_cut);
+  max_cut = std::sqrt(max_cut);
+  if (max_cut > min_cut + neighbor->skin) {
+    if (skin_flag) {
+      neighbor->skin = max_cut - min_cut;
+      if (comm->me == 0) {
+        utils::logmesg(lmp, "Skin distance auto adjusted to {} - {} = {}\n",
+          max_cut, min_cut, neighbor->skin);
+      }
+    } else if (comm->me == 0) {
+      error->warning(FLERR, "Max pair cutoff ({}) is larger than min pair cutoff ({}) + skin ({})",
+          max_cut, min_cut, neighbor->skin);
+    }
+  }
 
   /* TODO own neighbor list... has to be FULL - too big overhead ??
   if (!full_flag) {
