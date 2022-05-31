@@ -61,7 +61,7 @@ FixChangeState::FixChangeState(LAMMPS *lmp, int narg, char **arg) :
   state_group_masks(nullptr), state_group_invmasks(nullptr),
   sqrt_mass_ratio(nullptr), local_atom_list(nullptr),
   mol_atom_tag(nullptr), mol_atom_type(nullptr),
-  random_global(nullptr), random_local(nullptr), c_pe(nullptr)
+  random_global(nullptr), random_local(nullptr), c_pe(nullptr) //, neigh_list(nullptr)
 {
   if (narg < 12) error->all(FLERR,"Illegal fix change/state command");
 
@@ -584,7 +584,15 @@ void FixChangeState::init()
   }
   if (std::sqrt(max_cutsq) > std::sqrt(min_cutsq) + neighbor->skin)
     if (comm->me == 0) error->warning(FLERR,
-        "Max pair cutoff is larger than min pair cutoff + skin");
+        "Max pair cutoff ({}) is larger than min pair cutoff ({}) + skin ({})",
+        std::sqrt(max_cutsq), std::sqrt(min_cutsq), neighbor->skin);
+
+  /* TODO own neighbor list... has to be FULL - too big overhead ??
+  if (!full_flag) {
+    int neigh_list_flags = NeighConst::REQ_FULL;
+    neighbor->add_request(this, neigh_list_flags);
+  }
+  */
 }
 
 /* ----------------------------------------------------------------------
@@ -731,10 +739,11 @@ int FixChangeState::determine_mol_state(tagint mol_id)
   // get all atoms (tags) that make up this molecule (on all procs)
 
   int natoms, natoms_local = 0, nlocal = atom->nlocal, *mask = atom->mask;
+  tagint *tag = atom->tag;
   for (int i = 0; i < nlocal; i++) {
     if (atom->molecule[i] == mol_id) {
       if (natoms_local < mol_natoms)
-        mol_atom_tag[natoms_local] = atom->tag[i];
+        mol_atom_tag[natoms_local] = tag[i];
       natoms_local++;
       mask[i] |= sel_mol_group_bit;
     } else {
@@ -913,7 +922,7 @@ int FixChangeState::attempt_mol_state_change_local()
       double vcm[3], dv[3];
       vcm[0] = vcm[1] = vcm[2] = 0.0;
       group->vcm(sel_mol_group, mol_list[newstateindex]->masstotal, vcm);
-      // additive COM velocity correction (to keep relative motion inside molecule)
+      // additive COM velocity correction (to preserve relative motion inside molecule)
       dv[0] = vcm[0] * (sqrt_mass_ratio[oldstateindex][newstateindex] - 1);
       dv[1] = vcm[1] * (sqrt_mass_ratio[oldstateindex][newstateindex] - 1);
       dv[2] = vcm[2] * (sqrt_mass_ratio[oldstateindex][newstateindex] - 1);
@@ -1039,7 +1048,7 @@ int FixChangeState::attempt_mol_state_change_global()
       double vcm[3], dv[3];
       vcm[0] = vcm[1] = vcm[2] = 0.0;
       group->vcm(sel_mol_group, mol_list[newstateindex]->masstotal, vcm);
-      // additive COM velocity correction (to keep relative motion inside molecule)
+      // additive COM velocity correction (to preserve relative motion inside molecule)
       dv[0] = vcm[0] * (sqrt_mass_ratio[oldstateindex][newstateindex] - 1);
       dv[1] = vcm[1] * (sqrt_mass_ratio[oldstateindex][newstateindex] - 1);
       dv[2] = vcm[2] * (sqrt_mass_ratio[oldstateindex][newstateindex] - 1);
@@ -1093,18 +1102,23 @@ double FixChangeState::atom_energy_local(int i, bool in_mol)
 
   int nall = atom->nlocal + atom->nghost;
 
-  int numneigh = force->pair->list->numneigh[i];
-  int *ineighbors = force->pair->list->firstneigh[i];
+/* TODO alternative way to do it...
+
+  if (neigh_list == nullptr)
+    neigh_list = neighbor->find_list(this);
+  int numneigh = neigh_list->numneigh[i];
+  int *ineighbors = neigh_list->firstneigh[i];
 
   for (int jj = 0; jj < numneigh; jj++) {
 
     int j = ineighbors[jj];
+*/
+  for (int j = 0; j < nall; j++) {
 
     mol_factor = 1.0;
-    if (in_mol) {
-      if (atom->molecule[j] == atom->molecule[i])
-        mol_factor = 0.5;
-    }
+    if (in_mol && (atom->molecule[j] == atom->molecule[i]))
+      continue;
+      //mol_factor = 0.5;
 
     double *xj  = x[j];
     int jtype = type[j];

@@ -63,6 +63,8 @@ class FixChangeState : public Fix {
   int *ntrans;
   penalty_pair **transition;
 
+  // class NeighList *neigh_list;
+
   int regionflag; // 0 = anywhere in box, 1 = specific region
   class Region *region; // swap region pointer
   int full_flag; // 1 = full (global) PE calc, 0 = single (local) PE calc
