@@ -2,7 +2,7 @@
 /* -*- c++ -*- ----------------------------------------------------------
    LAMMPS - Large-scale Atomic/Molecular Massively Parallel Simulator
    https://www.lammps.org/, Sandia National Laboratories
-   Steve Plimpton, sjplimp@sandia.gov
+   LAMMPS development team: developers@lammps.org
 
    Copyright (2003) Sandia Corporation.  Under the terms of Contract
    DE-AC04-94AL85000 with Sandia Corporation, the U.S. Government retains
@@ -106,9 +106,9 @@ void PairSNAPKokkos<DeviceType, real_type, vector_length>::init_style()
   neighflag = lmp->kokkos->neighflag;
 
   auto request = neighbor->add_request(this, NeighConst::REQ_FULL);
-  request->set_kokkos_host(std::is_same<DeviceType,LMPHostType>::value &&
-                           !std::is_same<DeviceType,LMPDeviceType>::value);
-  request->set_kokkos_device(std::is_same<DeviceType,LMPDeviceType>::value);
+  request->set_kokkos_host(std::is_same_v<DeviceType,LMPHostType> &&
+                           !std::is_same_v<DeviceType,LMPDeviceType>);
+  request->set_kokkos_device(std::is_same_v<DeviceType,LMPDeviceType>);
   if (neighflag == FULL)
     error->all(FLERR,"Must use half neighbor list style with pair snap/kk");
 }
@@ -139,7 +139,7 @@ template<class DeviceType, typename real_type, int vector_length>
 void PairSNAPKokkos<DeviceType, real_type, vector_length>::compute(int eflag_in, int vflag_in)
 {
   if (host_flag) {
-    atomKK->sync(Host,X_MASK|TYPE_MASK);
+    atomKK->sync(Host,X_MASK|F_MASK|TYPE_MASK);
     PairSNAP::compute(eflag_in,vflag_in);
     atomKK->modified(Host,F_MASK);
     return;

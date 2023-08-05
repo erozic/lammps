@@ -1,7 +1,7 @@
 /* ----------------------------------------------------------------------
    LAMMPS - Large-scale Atomic/Molecular Massively Parallel Simulator
    https://www.lammps.org/, Sandia National Laboratories
-   Steve Plimpton, sjplimp@sandia.gov
+   LAMMPS Development team: developers@lammps.org
 
    Copyright (2003) Sandia Corporation.  Under the terms of Contract
    DE-AC04-94AL85000 with Sandia Corporation, the U.S. Government retains
@@ -25,6 +25,7 @@
 
 #include "atom.h"
 #include "compute.h"
+#include "domain.h"
 #include "force.h"
 #include "info.h"
 #include "input.h"
@@ -91,7 +92,7 @@ LAMMPS *init_lammps(int argc, char **argv, const TestConfig &cfg, const bool new
 
     // utility lambdas to improve readability
     auto command = [&](const std::string &line) {
-        lmp->input->one(line.c_str());
+        lmp->input->one(line);
     };
     auto parse_input_script = [&](const std::string &filename) {
         lmp->input->file(filename.c_str());
@@ -142,7 +143,7 @@ void run_lammps(LAMMPS *lmp)
 {
     // utility lambda to improve readability
     auto command = [&](const std::string &line) {
-        lmp->input->one(line.c_str());
+        lmp->input->one(line);
     };
 
     command("fix 1 all nve");
@@ -157,7 +158,7 @@ void restart_lammps(LAMMPS *lmp, const TestConfig &cfg, bool nofdotr = false, bo
 {
     // utility lambda to improve readability
     auto command = [&](const std::string &line) {
-        lmp->input->one(line.c_str());
+        lmp->input->one(line);
     };
 
     command("clear");
@@ -188,7 +189,7 @@ void data_lammps(LAMMPS *lmp, const TestConfig &cfg)
 {
     // utility lambdas to improve readability
     auto command = [&](const std::string &line) {
-        lmp->input->one(line.c_str());
+        lmp->input->one(line);
     };
     auto parse_input_script = [&](const std::string &filename) {
         lmp->input->file(filename.c_str());
@@ -239,7 +240,7 @@ void generate_yaml_file(const char *outfile, const TestConfig &config)
     }
 
     const int natoms = lmp->atom->natoms;
-    std::string block("");
+    std::string block;
 
     YamlWriter writer(outfile);
 
@@ -316,7 +317,6 @@ void generate_yaml_file(const char *outfile, const TestConfig &config)
     writer.emit_block("run_forces", block);
 
     cleanup_lammps(lmp, config);
-    return;
 }
 
 TEST(PairStyle, plain)
@@ -380,8 +380,9 @@ TEST(PairStyle, plain)
     EXPECT_FP_LE_WITH_EPS(pair->eng_vdwl, test_config.run_vdwl, epsilon);
     EXPECT_FP_LE_WITH_EPS(pair->eng_coul, test_config.run_coul, epsilon);
     // skip comparing per-atom energy with total energy for "kim" and "in.conp"
-    if (std::string("kim") != lmp->force->pair_style &&
-        std::string("in.conp") != test_config.input_file)
+    if ((std::string("kim") != lmp->force->pair_style) &&
+        (std::string("pod") != lmp->force->pair_style) &&
+        (std::string("in.conp") != test_config.input_file))
         EXPECT_FP_LE_WITH_EPS((pair->eng_vdwl + pair->eng_coul), energy, epsilon);
     if (print_stats) std::cerr << "run_energy  stats, newton on: " << stats << std::endl;
 
@@ -767,7 +768,7 @@ TEST(PairStyle, gpu)
         GTEST_SKIP();
 
     const char *args_neigh[]   = {"PairStyle", "-log",    "none", "-echo",
-                                "screen",    "-nocite", "-sf",  "gpu"};
+                                  "screen",    "-nocite", "-sf",  "gpu"};
     const char *args_noneigh[] = {"PairStyle", "-log", "none", "-echo", "screen", "-nocite", "-sf",
                                   "gpu",       "-pk",  "gpu",  "0",     "neigh",  "no"};
 
@@ -1085,7 +1086,7 @@ TEST(PairStyle, single)
 
     // utility lambda to improve readability
     auto command = [&](const std::string &line) {
-        lmp->input->one(line.c_str());
+        lmp->input->one(line);
     };
 
     command("clear");
@@ -1096,6 +1097,13 @@ TEST(PairStyle, single)
 
     for (auto &pre_command : test_config.pre_commands) {
         command(pre_command);
+    }
+
+    if (lmp->domain->box_exist) {
+        std::cerr << "Cannot test single() with YAML file that creates a box\n";
+        cleanup_lammps(lmp, test_config);
+        if (!verbose) ::testing::internal::GetCapturedStdout();
+        GTEST_SKIP();
     }
 
     command("atom_style full");
@@ -1317,7 +1325,7 @@ TEST(PairStyle, extract)
 
     // utility lambda to improve readability
     auto command = [&](const std::string &line) {
-        lmp->input->one(line.c_str());
+        lmp->input->one(line);
     };
 
     if (!verbose) ::testing::internal::CaptureStdout();
