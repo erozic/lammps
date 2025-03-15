@@ -1,6 +1,6 @@
 
 if(NOT Python_INTERPRETER)
-  # backward compatibility
+  # backward compatibility with older LAMMPS documentation
   if(PYTHON_EXECUTABLE)
     set(Python_EXECUTABLE ${PYTHON_EXECUTABLE})
   endif()

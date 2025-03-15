@@ -32,8 +32,8 @@
 using namespace LAMMPS_NS;
 using namespace MathConst;
 
-#define TOLERANCE 0.05
-#define SMALL     0.001
+static constexpr double TOLERANCE = 0.05;
+static constexpr double SMALL =     0.001;
 
 /* ---------------------------------------------------------------------- */
 
@@ -270,7 +270,7 @@ void ImproperCossq::coeff(int narg, char **arg)
       count++;
    }
 
-   if (count == 0) error->all(FLERR,"Incorrect args for improper coefficients");
+   if (count == 0) error->all(FLERR,"Incorrect args for improper coefficients" + utils::errorurl(21));
 }
 
 /* ----------------------------------------------------------------------

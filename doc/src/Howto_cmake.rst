@@ -1,10 +1,10 @@
-Using CMake with LAMMPS tutorial
-================================
+Using CMake with LAMMPS
+=======================
 
 The support for building LAMMPS with CMake is a recent addition to
 LAMMPS thanks to the efforts of Christoph Junghans (LANL) and Richard
 Berger (LANL).  One of the key strengths of CMake is that it is not
-tied to a specific platform or build system and thus it generates the
+tied to a specific platform or build system. Instead it generates the
 files necessary to build and develop for different build systems and on
 different platforms.  Note, that this applies to the build system itself
 not the LAMMPS code. In other words, without additional porting effort,
@@ -32,7 +32,8 @@ program ``cmake`` (or ``cmake3``), a text mode interactive user
 interface (TUI) program ``ccmake`` (or ``ccmake3``), or a graphical user
 interface (GUI) program ``cmake-gui``.  All of them are portable
 software available on all supported platforms and can be used
-interchangeably.  The minimum required CMake version is 3.16.
+interchangeably.  As of LAMMPS version 2 August 2023, the minimum
+required CMake version is 3.16.
 
 All details about features and settings for CMake are in the `CMake
 online documentation <https://cmake.org/documentation/>`_. We focus
@@ -55,7 +56,7 @@ using a shell like Bash or Zsh.
    Visual Studio IDE with the bundled CMake or from the Windows command prompt using
    a separately installed CMake package, both using the native Microsoft Visual C++
    compilers and (optionally) the Microsoft MPI SDK.  This tutorial, however, only
-   covers unix-like command line interfaces.
+   covers unix-like command-line interfaces.
 
 We also assume that you have downloaded and unpacked a recent LAMMPS source code package
 or used Git to create a clone of the LAMMPS sources on your compilation machine.
@@ -276,7 +277,7 @@ Setting options
 ---------------
 
 Options that enable, disable or modify settings are modified by setting
-the value of CMake variables. This is done on the command line with the
+the value of CMake variables. This is done on the command-line with the
 *-D* flag in the format ``-D VARIABLE=value``, e.g. ``-D
 CMAKE_BUILD_TYPE=Release`` or ``-D BUILD_MPI=on``.  There is one quirk:
 when used before the CMake directory, there may be a space between the
@@ -338,8 +339,6 @@ Some common LAMMPS specific variables
      - build LAMMPS with OpenMP support (default: ``on`` if compiler supports OpenMP fully, else ``off``)
    * - ``BUILD_TOOLS``
      - compile some additional executables from the ``tools`` folder (default: ``off``)
-   * - ``BUILD_LAMMPS_SHELL``
-     - compile the LAMMPS shell from the ``tools/lammps-shell`` folder (default: ``off``)
    * - ``BUILD_DOC``
      - include building the HTML format documentation for packaging/installing (default: ``off``)
    * - ``CMAKE_TUNE_FLAGS``
@@ -348,6 +347,8 @@ Some common LAMMPS specific variables
      - when set to ``name`` the LAMMPS executable and library will be called ``lmp_name`` and ``liblammps_name.a``
    * - ``FFT``
      - select which FFT library to use: ``FFTW3``, ``MKL``, ``KISS`` (default, unless FFTW3 is found)
+   * - ``FFT_KOKKOS``
+     - select which FFT library to use in Kokkos-enabled styles: ``FFTW3``, ``MKL``, ``HIPFFT``, ``CUFFT``, ``MKL_GPU``, ``KISS`` (default)
    * - ``FFT_SINGLE``
      - select whether to use single precision FFTs (default: ``off``)
    * - ``WITH_JPEG``
@@ -375,7 +376,7 @@ Using presets
 -------------
 
 Since LAMMPS has a lot of optional features and packages, specifying
-them all on the command line can be tedious. Or when selecting a
+them all on the command-line can be tedious. Or when selecting a
 different compiler toolchain, multiple options have to be changed
 consistently and that is rather error prone. Or when enabling certain
 packages, they require consistent settings to be operated in a
@@ -383,7 +384,7 @@ particular mode.  For this purpose, we are providing a selection of
 "preset files" for CMake in the folder ``cmake/presets``.  They
 represent a way to pre-load or override the CMake configuration cache by
 setting or changing CMake variables.  Preset files are loaded using the
-*-C* command line flag. You can combine loading multiple preset files or
+*-C* command-line flag. You can combine loading multiple preset files or
 change some variables later with additional *-D* flags.  A few examples:
 
 .. code-block:: bash

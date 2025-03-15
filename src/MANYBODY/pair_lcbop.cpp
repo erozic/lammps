@@ -13,7 +13,7 @@
 ------------------------------------------------------------------------- */
 
 /* ----------------------------------------------------------------------
-   Contributing author: Dominik Wójt (Wroclaw University of Technology)
+   Contributing author: Dominik Wojt (Wroclaw University of Technology)
      based on pair_airebo by Ase Henry (MIT)
 ------------------------------------------------------------------------- */
 
@@ -33,9 +33,9 @@
 
 using namespace LAMMPS_NS;
 
-#define MAXLINE 1024
-#define TOL 1.0e-9
-#define PGDELTA 1
+static constexpr int MAXLINE = 1024;
+static constexpr double TOL = 1.0e-9;
+static constexpr int PGDELTA = 1;
 
 /* ---------------------------------------------------------------------- */
 
@@ -131,7 +131,7 @@ void PairLCBOP::coeff(int narg, char **arg)
   // only element "C" is allowed
 
   if ((nelements != 1) || (strcmp(elements[0],"C") != 0))
-      error->all(FLERR,"Incorrect args for pair coefficients");
+      error->all(FLERR,"Incorrect args for pair coefficients" + utils::errorurl(21));
 
   // read potential file and initialize fitting splines
 

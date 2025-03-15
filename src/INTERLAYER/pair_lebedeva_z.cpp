@@ -39,8 +39,7 @@
 
 using namespace LAMMPS_NS;
 
-#define MAXLINE 1024
-#define DELTA 4
+static constexpr int DELTA = 4;
 
 /* ---------------------------------------------------------------------- */
 
@@ -233,7 +232,7 @@ void PairLebedevaZ::coeff(int narg, char **arg)
     }
   }
 
-  if (count == 0) error->all(FLERR,"Incorrect args for pair coefficients");
+  if (count == 0) error->all(FLERR,"Incorrect args for pair coefficients" + utils::errorurl(21));
 }
 
 /* ----------------------------------------------------------------------

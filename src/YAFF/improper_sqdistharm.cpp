@@ -28,11 +28,7 @@
 #include "memory.h"
 #include "error.h"
 
-
 using namespace LAMMPS_NS;
-
-#define TOLERANCE 0.05
-#define SMALL     0.001
 
 /* ---------------------------------------------------------------------- */
 
@@ -221,7 +217,7 @@ void ImproperSQDistHarm::allocate()
 void ImproperSQDistHarm::coeff(int narg, char **arg)
 {
 //  if (which > 0) return;
-  if (narg != 3) error->all(FLERR,"Incorrect args for improper coefficients");
+  if (narg != 3) error->all(FLERR,"Incorrect args for improper coefficients" + utils::errorurl(21));
   if (!allocated) allocate();
 
   int ilo,ihi;
@@ -241,7 +237,7 @@ void ImproperSQDistHarm::coeff(int narg, char **arg)
     count++;
   }
 
-  if (count == 0) error->all(FLERR,"Incorrect args for improper coefficients");
+  if (count == 0) error->all(FLERR,"Incorrect args for improper coefficients" + utils::errorurl(21));
 }
 
 /* ----------------------------------------------------------------------

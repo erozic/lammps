@@ -34,7 +34,7 @@
 
 using namespace LAMMPS_NS;
 
-#define EPSILON 1.0e-10
+static constexpr double EPSILON = 1.0e-10;
 
 static const char cite_pair_mdpd[] =
   "pair mdpd command: doi:10.1063/1.4812366\n\n"
@@ -270,7 +270,7 @@ void PairMDPD::coeff(int narg, char **arg)
       count++;
     }
   }
-  if (count == 0) error->all(FLERR,"Incorrect args for pair coefficients");
+  if (count == 0) error->all(FLERR,"Incorrect args for pair coefficients" + utils::errorurl(21));
 }
 
 /* ----------------------------------------------------------------------

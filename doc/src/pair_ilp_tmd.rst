@@ -26,8 +26,8 @@ Examples
 
    pair_style  hybrid/overlay sw/mod sw/mod ilp/tmd 16.0
    pair_coeff  * * sw/mod 1  tmd.sw.mod Mo S S NULL NULL NULL
-   pair_coeff  * * sw/mod 2  tmd.sw.mod NULL NULL NULL Mo S S
-   pair_coeff  * * ilp/tmd   TMD.ILP    Mo S S Mo S S
+   pair_coeff  * * sw/mod 2  tmd.sw.mod NULL NULL NULL W Se Se
+   pair_coeff  * * ilp/tmd   TMD.ILP   Mo S S W Se Se
 
 Description
 """""""""""
@@ -36,19 +36,19 @@ Description
 
 The *ilp/tmd* style computes the registry-dependent interlayer
 potential (ILP) potential for transition metal dichalcogenides (TMD)
-as described in :ref:`(Ouyang7) <Ouyang7>`.
+as described in :ref:`(Ouyang7) <Ouyang7>` and :ref:`(Jiang) <Jiang>`.
 
 .. math::
 
    E  = & \frac{1}{2} \sum_i \sum_{j \neq i} V_{ij} \\
-   V_{ij}  = & {\rm Tap}(r_{ij})\left \{ e^{-\alpha (r_{ij}/\beta -1)}
+   V_{ij}  = & \mathrm{Tap}(r_{ij})\left \{ e^{-\alpha (r_{ij}/\beta -1)}
                 \left [ \epsilon + f(\rho_{ij}) + f(\rho_{ji})\right ] -
                  \frac{1}{1+e^{-d\left [ \left ( r_{ij}/\left (s_R \cdot r^{eff} \right ) \right )-1 \right ]}}
                  \cdot \frac{C_6}{r^6_{ij}} \right \}\\
-   \rho_{ij}^2 = & r_{ij}^2 - ({\bf r}_{ij} \cdot {\bf n}_i)^2 \\
-   \rho_{ji}^2  = & r_{ij}^2 - ({\bf r}_{ij} \cdot {\bf n}_j)^2 \\
+   \rho_{ij}^2 = & r_{ij}^2 - (\mathbf{r}_{ij} \cdot \mathbf{n}_i)^2 \\
+   \rho_{ji}^2  = & r_{ij}^2 - (\mathbf{r}_{ij} \cdot \mathbf{n}_j)^2 \\
    f(\rho)  = &  C e^{ -( \rho / \delta )^2 } \\
-   {\rm Tap}(r_{ij})  = & 20\left ( \frac{r_{ij}}{R_{cut}} \right )^7 -
+   \mathrm{Tap}(r_{ij})  = & 20\left ( \frac{r_{ij}}{R_{cut}} \right )^7 -
                            70\left ( \frac{r_{ij}}{R_{cut}} \right )^6 +
                            84\left ( \frac{r_{ij}}{R_{cut}} \right )^5 -
                            35\left ( \frac{r_{ij}}{R_{cut}} \right )^4 + 1
@@ -67,7 +67,7 @@ calculating the normals.
    normal vectors used for graphene and h-BN is no longer valid for TMDs.
    In :ref:`(Ouyang7) <Ouyang7>`, a new definition is proposed, where for
    each atom `i`, its six nearest neighboring atoms belonging to the same
-   sub-layer are chosen to define the normal vector `{\bf n}_i`.
+   sub-layer are chosen to define the normal vector `\mathbf{n}_i`.
 
 The parameter file (e.g. TMD.ILP), is intended for use with *metal*
 :doc:`units <units>`, with energies in meV. Two additional parameters,
@@ -164,3 +164,7 @@ tap_flag = 1
 .. _Ouyang7:
 
 **(Ouyang7)** W. Ouyang, et al., J. Chem. Theory Comput. 17, 7237 (2021).
+
+.. _Jiang:
+
+**(Jiang)** W. Jiang, et al., J. Phys. Chem. A, 127, 46, 9820-9830 (2023).

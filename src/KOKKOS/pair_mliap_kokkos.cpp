@@ -138,6 +138,7 @@ template<class DeviceType>
 void PairMLIAPKokkos<DeviceType>::allocate()
 {
   int n = atom->ntypes;
+
   memoryKK->destroy_kokkos(k_map, map);
   memoryKK->destroy_kokkos(k_cutsq, cutsq);
   memoryKK->destroy_kokkos(k_setflag, setflag);
@@ -213,7 +214,7 @@ void PairMLIAPKokkos<DeviceType>::settings(int narg, char ** arg)
 
 template<class DeviceType>
 void PairMLIAPKokkos<DeviceType>::coeff(int narg, char **arg) {
-  if (narg < 3) error->all(FLERR,"Incorrect args for pair coefficients");
+  if (narg < 3) error->all(FLERR,"Incorrect args for pair coefficients" + utils::errorurl(21));
   if (!allocated) {
     PairMLIAP::allocate();
     allocate();
@@ -226,7 +227,7 @@ void PairMLIAPKokkos<DeviceType>::coeff(int narg, char **arg) {
   // ensure I,J args are * *
 
   if (strcmp(type1,"*") != 0 || strcmp(type2,"*") != 0)
-    error->all(FLERR,"Incorrect args for pair coefficients");
+    error->all(FLERR,"Incorrect args for pair coefficients" + utils::errorurl(21));
 
   // read args that map atom types to elements
   // map[i] = which element the Ith atom type is, -1 if not mapped
@@ -239,10 +240,11 @@ void PairMLIAPKokkos<DeviceType>::coeff(int narg, char **arg) {
       if (strcmp(elemname,descriptor->elements[jelem]) == 0)
         break;
 
+    //printf(">>> nelements: %d\n", descriptor->nelements);
     if (jelem < descriptor->nelements)
       map[i] = jelem;
     else if (strcmp(elemname,"NULL") == 0) map[i] = -1;
-    else error->all(FLERR,"Incorrect args for pair coefficients");
+    else error->all(FLERR,"Incorrect args for pair coefficients" + utils::errorurl(21));
   }
   k_map.modify<LMPHostType>();
   k_map.sync<LMPDeviceType>();
@@ -266,7 +268,7 @@ void PairMLIAPKokkos<DeviceType>::coeff(int narg, char **arg) {
   k_setflag.modify<LMPHostType>();
   k_setflag.sync<LMPDeviceType>();
 
-  if (count == 0) error->all(FLERR,"Incorrect args for pair coefficients");
+  if (count == 0) error->all(FLERR,"Incorrect args for pair coefficients" + utils::errorurl(21));
 
   // set up model, descriptor, and mliap data structures
   model->init();
@@ -275,7 +277,10 @@ void PairMLIAPKokkos<DeviceType>::coeff(int narg, char **arg) {
   auto h_cutsq=k_cutsq.template view<LMPHostType>();
   for (int itype=1; itype <= atom->ntypes; ++itype)
     for (int jtype=1; jtype <= atom->ntypes; ++jtype)
-      h_cutsq(itype,jtype) = descriptor->cutsq[map[itype]][map[jtype]];
+      // do not set cuts for NULL atoms
+      if (map[itype] >= 0 && map[jtype] >= 0) {
+        h_cutsq(itype,jtype) = descriptor->cutsq[map[itype]][map[jtype]];
+      }
   k_cutsq.modify<LMPHostType>();
   k_cutsq.sync<DeviceType>();
   constexpr int gradgradflag = -1;
@@ -298,7 +303,7 @@ void PairMLIAPKokkos<DeviceType>::e_tally(MLIAPData* data)
     auto d_iatoms = k_data->k_iatoms.template view<DeviceType>();
     auto d_eatoms = k_data->k_eatoms.template view<DeviceType>();
     auto d_eatom = k_eatom.template view<DeviceType>();
-    Kokkos::parallel_for(data->nlistatoms, KOKKOS_LAMBDA (int ii) {
+    Kokkos::parallel_for(Kokkos::RangePolicy<DeviceType>(0,data->nlistatoms), KOKKOS_LAMBDA (int ii) {
       d_eatom(d_iatoms(ii)) = d_eatoms(ii);
     });
     k_eatom.modify<DeviceType>();

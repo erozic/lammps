@@ -38,7 +38,7 @@ using namespace MathConst;
 using namespace MathSpecial;
 using namespace MathExtra;
 
-#define SMALL 0.00001
+static constexpr double SMALL = 0.00001;
 
 //#define DEBUG
 
@@ -220,7 +220,7 @@ void EwaldDisp::init()
       error->all(FLERR,"Cannot use Ewald/disp solver on system without "
                  "charged, dipole, or LJ particles");
   if (fabs(qsum) > SMALL && comm->me == 0)
-    error->warning(FLERR,"System is not charge neutral, net charge = {:.8g}",qsum);
+    error->warning(FLERR,"System is not charge neutral, net charge = {:.8g}" + utils::errorurl(29),qsum);
 
   if (!function[1] && !function[2]) dispersionflag = 0;
   if (!function[3]) dipoleflag = 0;
@@ -1128,8 +1128,6 @@ void EwaldDisp::compute_energy_peratom()
 }
 
 /* ---------------------------------------------------------------------- */
-
-#define swap(a, b) { register double t = a; a= b; b = t; }
 
 void EwaldDisp::compute_virial()
 {

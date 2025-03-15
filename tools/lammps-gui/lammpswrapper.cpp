@@ -19,17 +19,35 @@
 #include "library.h"
 #endif
 
-LammpsWrapper::LammpsWrapper() : lammps_handle(nullptr), plugin_handle(nullptr) {}
+LammpsWrapper::LammpsWrapper() : lammps_handle(nullptr)
+{
+#if defined(LAMMPS_GUI_USE_PLUGIN)
+    plugin_handle = nullptr;
+#endif
+}
 
 void LammpsWrapper::open(int narg, char **args)
 {
-    if (!lammps_handle) {
+    // since there may only be one LAMMPS instance in LAMMPS-GUI we don't open a second one
+    if (lammps_handle) return;
 #if defined(LAMMPS_GUI_USE_PLUGIN)
-        lammps_handle = ((liblammpsplugin_t *)plugin_handle)->open_no_mpi(narg, args, nullptr);
+    lammps_handle = ((liblammpsplugin_t *)plugin_handle)->open_no_mpi(narg, args, nullptr);
 #else
-        lammps_handle = lammps_open_no_mpi(narg, args, nullptr);
+    lammps_handle = lammps_open_no_mpi(narg, args, nullptr);
+#endif
+}
+
+int LammpsWrapper::version()
+{
+    int val = 0;
+    if (lammps_handle) {
+#if defined(LAMMPS_GUI_USE_PLUGIN)
+        val = ((liblammpsplugin_t *)plugin_handle)->version(lammps_handle);
+#else
+        val = lammps_version(lammps_handle);
 #endif
     }
+    return val;
 }
 
 int LammpsWrapper::extract_setting(const char *keyword)
@@ -39,7 +57,132 @@ int LammpsWrapper::extract_setting(const char *keyword)
 #if defined(LAMMPS_GUI_USE_PLUGIN)
         val = ((liblammpsplugin_t *)plugin_handle)->extract_setting(lammps_handle, keyword);
 #else
-        val           = lammps_extract_setting(lammps_handle, keyword);
+        val = lammps_extract_setting(lammps_handle, keyword);
+#endif
+    }
+    return val;
+}
+
+void *LammpsWrapper::extract_global(const char *keyword)
+{
+    void *val = nullptr;
+    if (lammps_handle) {
+#if defined(LAMMPS_GUI_USE_PLUGIN)
+        val = ((liblammpsplugin_t *)plugin_handle)->extract_global(lammps_handle, keyword);
+#else
+        val = lammps_extract_global(lammps_handle, keyword);
+#endif
+    }
+    return val;
+}
+
+void *LammpsWrapper::extract_pair(const char *keyword)
+{
+    void *val = nullptr;
+    if (lammps_handle) {
+#if defined(LAMMPS_GUI_USE_PLUGIN)
+        val = ((liblammpsplugin_t *)plugin_handle)->extract_pair(lammps_handle, keyword);
+#else
+        val = lammps_extract_pair(lammps_handle, keyword);
+#endif
+    }
+    return val;
+}
+
+void *LammpsWrapper::extract_atom(const char *keyword)
+{
+    void *val = nullptr;
+    if (lammps_handle) {
+#if defined(LAMMPS_GUI_USE_PLUGIN)
+        val = ((liblammpsplugin_t *)plugin_handle)->extract_atom(lammps_handle, keyword);
+#else
+        val = lammps_extract_atom(lammps_handle, keyword);
+#endif
+    }
+    return val;
+}
+
+// note: equal style and compatible variables only
+double LammpsWrapper::extract_variable(const char *keyword)
+{
+    void *ptr = nullptr;
+    if (lammps_handle) {
+#if defined(LAMMPS_GUI_USE_PLUGIN)
+        ptr = ((liblammpsplugin_t *)plugin_handle)->extract_variable(lammps_handle, keyword, nullptr);
+#else
+        ptr = lammps_extract_variable(lammps_handle, keyword, nullptr);
+#endif
+    }
+    double val = *((double *)ptr);
+#if defined(LAMMPS_GUI_USE_PLUGIN)
+    ((liblammpsplugin_t *)plugin_handle)->free(ptr);
+#else
+    lammps_free(ptr);
+#endif
+    return val;
+}
+
+int LammpsWrapper::id_count(const char *keyword)
+{
+    int val = 0;
+    if (lammps_handle) {
+#if defined(LAMMPS_GUI_USE_PLUGIN)
+        val = ((liblammpsplugin_t *)plugin_handle)->id_count(lammps_handle, keyword);
+#else
+        val = lammps_id_count(lammps_handle, keyword);
+#endif
+    }
+    return val;
+}
+
+int LammpsWrapper::id_name(const char *keyword, int idx, char *buf, int len)
+{
+    int val = 0;
+    if (lammps_handle) {
+#if defined(LAMMPS_GUI_USE_PLUGIN)
+        val = ((liblammpsplugin_t *)plugin_handle)->id_name(lammps_handle, keyword, idx, buf, len);
+#else
+        val = lammps_id_name(lammps_handle, keyword, idx, buf, len);
+#endif
+    }
+    return val;
+}
+
+int LammpsWrapper::style_count(const char *keyword)
+{
+    int val = 0;
+    if (lammps_handle) {
+#if defined(LAMMPS_GUI_USE_PLUGIN)
+        val = ((liblammpsplugin_t *)plugin_handle)->style_count(lammps_handle, keyword);
+#else
+        val = lammps_style_count(lammps_handle, keyword);
+#endif
+    }
+    return val;
+}
+
+int LammpsWrapper::style_name(const char *keyword, int idx, char *buf, int len)
+{
+    int val = 0;
+    if (lammps_handle) {
+#if defined(LAMMPS_GUI_USE_PLUGIN)
+        val =
+            ((liblammpsplugin_t *)plugin_handle)->style_name(lammps_handle, keyword, idx, buf, len);
+#else
+        val = lammps_style_name(lammps_handle, keyword, idx, buf, len);
+#endif
+    }
+    return val;
+}
+
+int LammpsWrapper::variable_info(int idx, char *buf, int len)
+{
+    int val = 0;
+    if (lammps_handle) {
+#if defined(LAMMPS_GUI_USE_PLUGIN)
+        val = ((liblammpsplugin_t *)plugin_handle)->variable_info(lammps_handle, idx, buf, len);
+#else
+        val = lammps_variable_info(lammps_handle, idx, buf, len);
 #endif
     }
     return val;
@@ -52,10 +195,23 @@ double LammpsWrapper::get_thermo(const char *keyword)
 #if defined(LAMMPS_GUI_USE_PLUGIN)
         val = ((liblammpsplugin_t *)plugin_handle)->get_thermo(lammps_handle, keyword);
 #else
-        val           = lammps_get_thermo(lammps_handle, keyword);
+        val = lammps_get_thermo(lammps_handle, keyword);
 #endif
     }
     return val;
+}
+
+void *LammpsWrapper::last_thermo(const char *keyword, int index)
+{
+    void *ptr = nullptr;
+    if (lammps_handle) {
+#if defined(LAMMPS_GUI_USE_PLUGIN)
+        ptr = ((liblammpsplugin_t *)plugin_handle)->last_thermo(lammps_handle, keyword, index);
+#else
+        ptr = lammps_last_thermo(lammps_handle, keyword, index);
+#endif
+    }
+    return ptr;
 }
 
 bool LammpsWrapper::is_running()
@@ -65,7 +221,7 @@ bool LammpsWrapper::is_running()
 #if defined(LAMMPS_GUI_USE_PLUGIN)
         val = ((liblammpsplugin_t *)plugin_handle)->is_running(lammps_handle);
 #else
-        val           = lammps_is_running(lammps_handle);
+        val = lammps_is_running(lammps_handle);
 #endif
     }
     return val != 0;
@@ -78,6 +234,17 @@ void LammpsWrapper::command(const char *input)
         ((liblammpsplugin_t *)plugin_handle)->command(lammps_handle, input);
 #else
         lammps_command(lammps_handle, input);
+#endif
+    }
+}
+
+void LammpsWrapper::file(const char *filename)
+{
+    if (lammps_handle) {
+#if defined(LAMMPS_GUI_USE_PLUGIN)
+        ((liblammpsplugin_t *)plugin_handle)->file(lammps_handle, filename);
+#else
+        lammps_file(lammps_handle, filename);
 #endif
     }
 }
@@ -103,6 +270,7 @@ bool LammpsWrapper::has_error() const
 #endif
 }
 
+// may be called with null handle. returns global error then.
 int LammpsWrapper::get_last_error_message(char *buf, int buflen)
 {
 #if defined(LAMMPS_GUI_USE_PLUGIN)
@@ -115,9 +283,9 @@ int LammpsWrapper::get_last_error_message(char *buf, int buflen)
 void LammpsWrapper::force_timeout()
 {
 #if defined(LAMMPS_GUI_USE_PLUGIN)
-    ((liblammpsplugin_t *)plugin_handle)->force_timeout(lammps_handle);
+    if (lammps_handle) ((liblammpsplugin_t *)plugin_handle)->force_timeout(lammps_handle);
 #else
-    lammps_force_timeout(lammps_handle);
+    if (lammps_handle) lammps_force_timeout(lammps_handle);
 #endif
 }
 
@@ -171,6 +339,15 @@ bool LammpsWrapper::config_accelerator(const char *package, const char *category
 #endif
 }
 
+bool LammpsWrapper::config_has_curl_support() const
+{
+#if defined(LAMMPS_GUI_USE_PLUGIN)
+    return ((liblammpsplugin_t *)plugin_handle)->config_has_curl_support() != 0;
+#else
+    return lammps_config_has_curl_support() != 0;
+#endif
+}
+
 bool LammpsWrapper::has_gpu_device() const
 {
 #if defined(LAMMPS_GUI_USE_PLUGIN)
@@ -188,7 +365,10 @@ bool LammpsWrapper::has_plugin() const
 
 bool LammpsWrapper::load_lib(const char *libfile)
 {
-    if (plugin_handle) liblammpsplugin_release((liblammpsplugin_t *)plugin_handle);
+    if (plugin_handle) {
+        close();
+        liblammpsplugin_release((liblammpsplugin_t *)plugin_handle);
+    }
     plugin_handle = liblammpsplugin_load(libfile);
     if (!plugin_handle) return false;
     if (((liblammpsplugin_t *)plugin_handle)->abiversion != LAMMPSPLUGIN_ABI_VERSION) {
