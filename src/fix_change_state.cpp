@@ -12,7 +12,7 @@
 ------------------------------------------------------------------------- */
 
 /* ----------------------------------------------------------------------
-   Contributing author: Eugen Rozic (eugen.rozic@irb.hr)
+   Contributing author: Eugen Rozic (eugen.rozic.17@alumni.ucl.ac.uk)
 ------------------------------------------------------------------------- */
 
 #include "fix_change_state.h"
