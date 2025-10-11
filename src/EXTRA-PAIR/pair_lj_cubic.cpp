@@ -25,6 +25,7 @@
 #include "neigh_list.h"
 
 #include <cmath>
+#include <cstring>
 
 #include "pair_lj_cubic_const.h"
 
@@ -346,4 +347,14 @@ double PairLJCubic::single(int /*i*/, int /*j*/, int itype, int jtype, double rs
     philj = epsilon[itype][jtype] * (PHIS + DPHIDS * t - A3 * t * t * t / 6.0);
 
   return factor_lj * philj;
+}
+
+/* ---------------------------------------------------------------------- */
+
+void *PairLJCubic::extract(const char *str, int &dim)
+{
+  dim = 2;
+  if (strcmp(str, "epsilon") == 0) return (void *) epsilon;
+  if (strcmp(str, "sigma") == 0) return (void *) sigma;
+  return nullptr;
 }
